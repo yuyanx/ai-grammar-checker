@@ -254,59 +254,42 @@ function applyFix(
 
   element.focus();
 
-  let selectionSet = false;
-
   if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
-    selectionSet = setTextareaSelection(element, error);
+    // For input/textarea: direct value replacement using offset for accuracy.
+    // This avoids async execCommand issues where the selection can shift.
+    const value = element.value;
+
+    // Use error.offset first, fall back to indexOf
+    let idx = error.offset;
+    if (idx < 0 || value.substring(idx, idx + error.original.length) !== error.original) {
+      idx = value.indexOf(error.original);
+    }
+    if (idx === -1) return;
+
+    // Try execCommand first (preserves undo history)
+    element.setSelectionRange(idx, idx + error.original.length);
+    const inserted = document.execCommand("insertText", false, error.suggestion);
+
+    if (!inserted || element.value === value) {
+      // Fallback: direct value assignment
+      const before = value.substring(0, idx);
+      const after = value.substring(idx + error.original.length);
+      element.value = before + error.suggestion + after;
+    }
+
+    const cursorPos = idx + error.suggestion.length;
+    element.setSelectionRange(cursorPos, cursorPos);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
   } else if (element.isContentEditable) {
-    selectionSet = setContentEditableSelection(element, error);
-  }
-
-  if (selectionSet) {
-    // Snapshot value before sending to MAIN world
-    const valueBefore = (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement)
-      ? element.value : null;
-
-    // Delegate execCommand to MAIN world where it actually works
-    window.postMessage(
-      { type: "AI_GRAMMAR_APPLY_FIX", suggestion: error.suggestion },
-      "*"
-    );
-
-    // Fallback for textareas only: if execCommand didn't work in MAIN world,
-    // do a direct value replacement after a delay
-    if (valueBefore !== null) {
-      const el = element as HTMLTextAreaElement | HTMLInputElement;
-      setTimeout(() => {
-        // Only apply fallback if the value is completely unchanged
-        if (el.value === valueBefore) {
-          const idx = el.value.indexOf(error.original);
-          if (idx === -1) return;
-          const before = el.value.substring(0, idx);
-          const after = el.value.substring(idx + error.original.length);
-          el.value = before + error.suggestion + after;
-          el.setSelectionRange(
-            idx + error.suggestion.length,
-            idx + error.suggestion.length
-          );
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-      }, 100);
+    const selectionSet = setContentEditableSelection(element, error);
+    if (selectionSet) {
+      // Delegate execCommand to MAIN world where it works for contentEditable
+      window.postMessage(
+        { type: "AI_GRAMMAR_APPLY_FIX", suggestion: error.suggestion },
+        "*"
+      );
     }
   }
-}
-
-/**
- * Set selection range on a textarea/input for the error text. Returns true if selection was set.
- */
-function setTextareaSelection(
-  element: HTMLTextAreaElement | HTMLInputElement,
-  error: GrammarError
-): boolean {
-  const idx = element.value.indexOf(error.original);
-  if (idx === -1) return false;
-  element.setSelectionRange(idx, idx + error.original.length);
-  return true;
 }
 
 /**
