@@ -7,7 +7,6 @@ import { showPopover } from "./popover.js";
 const elementStates = new WeakMap<HTMLElement, ElementState>();
 let debounceMs = 1500;
 let enabled = true;
-let rateLimitedUntil = 0; // timestamp — skip API calls until this time
 
 // Privacy: skip these input types and field patterns
 const PRIVACY_SKIP_TYPES = new Set(["password", "hidden"]);
@@ -144,9 +143,6 @@ async function checkElement(element: HTMLElement): Promise<void> {
   // Skip empty, too short, or unchanged text
   if (!text.trim() || text.trim().length < 10 || text === state.lastText) return;
 
-  // Skip if rate limited
-  if (Date.now() < rateLimitedUntil) return;
-
   state.lastText = text;
 
   // Show checking widget
@@ -164,10 +160,6 @@ async function checkElement(element: HTMLElement): Promise<void> {
     const response: CheckResponse = await chrome.runtime.sendMessage(request);
 
     if (response.error) {
-      if (response.error.toLowerCase().includes("rate limit") ||
-          response.error.toLowerCase().includes("quota exceeded")) {
-        rateLimitedUntil = Date.now() + 120000;
-      }
       updateWidget(element, "idle");
       return;
     }

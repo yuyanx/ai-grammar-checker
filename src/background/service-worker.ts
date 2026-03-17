@@ -4,17 +4,41 @@ import { buildGrammarCheckPrompt } from "../shared/prompts.js";
 import { parseOpenAIResponse, parseGeminiResponse, validateErrors } from "../shared/api-parsers.js";
 import { OPENAI_API_URL, GEMINI_API_URL, DEFAULT_OPENAI_MODEL, MAX_TEXT_LENGTH } from "../shared/constants.js";
 
+// Rate limit state lives here in the service worker — persists across all tabs/page loads
+let rateLimitedUntil = 0;
+
 chrome.runtime.onMessage.addListener(
   (message: any, sender, sendResponse) => {
     if (message.type === "CHECK_GRAMMAR") {
+      // If rate limited, reject immediately without making an API call
+      if (Date.now() < rateLimitedUntil) {
+        const response: CheckResponse = {
+          type: "CHECK_GRAMMAR_RESULT",
+          requestId: message.requestId,
+          errors: [],
+          error: "Rate limited",
+          rateLimitedUntil,
+        };
+        sendResponse(response);
+        return true;
+      }
+
       handleCheckGrammar(message)
         .then(sendResponse)
         .catch((err) => {
+          const msg = err instanceof Error ? err.message : "Unknown error";
+          // Parse retry-after from error message if present
+          const retryMatch = msg.match(/retry in (\d+(?:\.\d+)?)s/i);
+          if (msg.toLowerCase().includes("rate limit") || msg.toLowerCase().includes("quota")) {
+            const waitSecs = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : 60;
+            rateLimitedUntil = Date.now() + waitSecs * 1000;
+          }
           const response: CheckResponse = {
             type: "CHECK_GRAMMAR_RESULT",
             requestId: message.requestId,
             errors: [],
-            error: err instanceof Error ? err.message : "Unknown error",
+            error: msg,
+            rateLimitedUntil: rateLimitedUntil > Date.now() ? rateLimitedUntil : undefined,
           };
           sendResponse(response);
         });

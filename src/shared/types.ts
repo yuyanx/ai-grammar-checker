@@ -22,6 +22,7 @@ export interface CheckResponse {
   requestId: string;
   errors: GrammarError[];
   error?: string;
+  rateLimitedUntil?: number; // epoch ms — content script should not retry until this time
 }
 
 export interface UserSettings {
