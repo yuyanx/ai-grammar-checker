@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="options.css">
+  <title>AI Grammar Checker - Settings</title>
+</head>
+<body>
+  <div class="options">
+    <h1 class="options__title">AI Grammar Checker Settings</h1>
+
+    <section class="section">
+      <h2 class="section__title">AI Provider</h2>
+      <div class="radio-group">
+        <label class="radio">
+          <input type="radio" name="provider" value="openai" checked>
+          <span class="radio__label">OpenAI (ChatGPT)</span>
+          <span class="radio__desc">Uses gpt-4o-mini for fast, affordable grammar checking</span>
+        </label>
+        <label class="radio">
+          <input type="radio" name="provider" value="gemini">
+          <span class="radio__label">Google Gemini</span>
+          <span class="radio__desc">Uses Gemini 2.5 Flash Lite for grammar checking</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section__title">API Key</h2>
+      <div class="key-group" id="openaiKeyGroup">
+        <label class="input-label">OpenAI API Key</label>
+        <div class="input-row">
+          <input type="password" id="openaiKey" class="input" placeholder="sk-...">
+          <button class="btn btn--secondary" id="toggleOpenaiKey">Show</button>
+        </div>
+      </div>
+      <div class="key-group" id="geminiKeyGroup" style="display:none;">
+        <label class="input-label">Gemini API Key</label>
+        <div class="input-row">
+          <input type="password" id="geminiKey" class="input" placeholder="AI...">
+          <button class="btn btn--secondary" id="toggleGeminiKey">Show</button>
+        </div>
+      </div>
+      <button class="btn btn--primary" id="testBtn">Test Connection</button>
+      <div class="test-result" id="testResult"></div>
+    </section>
+
+    <section class="section">
+      <h2 class="section__title">Preferences</h2>
+
+      <div class="pref-row">
+        <label class="input-label">Check delay (ms)</label>
+        <div class="slider-row">
+          <input type="range" id="debounceSlider" min="500" max="5000" step="100" value="1500" class="slider">
+          <span id="debounceValue" class="slider__value">1500ms</span>
+        </div>
+      </div>
+
+      <div class="pref-row">
+        <label class="input-label">Error types to check</label>
+        <div class="checkbox-group">
+          <label class="checkbox">
+            <input type="checkbox" id="checkGrammar" checked>
+            <span>Grammar</span>
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="checkSpelling" checked>
+            <span>Spelling</span>
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="checkPunctuation" checked>
+            <span>Punctuation</span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <div class="actions">
+      <button class="btn btn--primary btn--large" id="saveBtn">Save Settings</button>
+      <div class="save-result" id="saveResult"></div>
+    </div>
+
+    <footer class="footer">
+      <p>AI Grammar Checker v1.0.0</p>
+      <p>Grammar checking powered by your own API keys.</p>
+    </footer>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>
