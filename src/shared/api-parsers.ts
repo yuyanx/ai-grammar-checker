@@ -15,12 +15,25 @@ export function parseOpenAIResponse(responseJson: any): GrammarError[] {
 
 export function parseGeminiResponse(responseJson: any): GrammarError[] {
   try {
-    const text = responseJson.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return [];
-    const parsed = JSON.parse(text);
-    const errors = parsed.errors || parsed;
-    if (!Array.isArray(errors)) return [];
-    return errors;
+    const parts = responseJson.candidates?.[0]?.content?.parts;
+    if (!Array.isArray(parts) || parts.length === 0) return [];
+
+    // Gemini 2.5 models may include "thought" parts before the actual response.
+    // Find the last non-thought part that contains the JSON output.
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const part = parts[i];
+      if (part.thought) continue; // skip thinking parts
+      const text = part.text;
+      if (!text) continue;
+      try {
+        const parsed = JSON.parse(text);
+        const errors = parsed.errors || parsed;
+        if (Array.isArray(errors)) return errors;
+      } catch {
+        // not valid JSON, try next part
+      }
+    }
+    return [];
   } catch {
     return [];
   }

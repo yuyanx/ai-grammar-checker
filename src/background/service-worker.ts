@@ -4,17 +4,67 @@ import { buildGrammarCheckPrompt } from "../shared/prompts.js";
 import { parseOpenAIResponse, parseGeminiResponse, validateErrors } from "../shared/api-parsers.js";
 import { OPENAI_API_URL, GEMINI_API_URL, DEFAULT_OPENAI_MODEL, MAX_TEXT_LENGTH } from "../shared/constants.js";
 
+// Rate limit state lives here in the service worker — persists across all tabs/page loads
+let rateLimitedUntil = 0;
+
+// Simple LRU cache for recent checks (text → errors)
+const responseCache = new Map<string, { errors: GrammarError[]; timestamp: number }>();
+const CACHE_TTL = 60_000; // 1 minute
+const CACHE_MAX = 50;
+
+function getCached(text: string): GrammarError[] | null {
+  const entry = responseCache.get(text);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CACHE_TTL) {
+    responseCache.delete(text);
+    return null;
+  }
+  return entry.errors;
+}
+
+function setCache(text: string, errors: GrammarError[]): void {
+  if (responseCache.size >= CACHE_MAX) {
+    const oldest = responseCache.keys().next().value!;
+    responseCache.delete(oldest);
+  }
+  responseCache.set(text, { errors, timestamp: Date.now() });
+}
+
+// Track in-flight requests so we can abort superseded ones
+const inflightAborts = new Map<string, AbortController>();
+
 chrome.runtime.onMessage.addListener(
   (message: any, sender, sendResponse) => {
     if (message.type === "CHECK_GRAMMAR") {
+      // If rate limited, reject immediately without making an API call
+      if (Date.now() < rateLimitedUntil) {
+        const response: CheckResponse = {
+          type: "CHECK_GRAMMAR_RESULT",
+          requestId: message.requestId,
+          errors: [],
+          error: "Rate limited",
+          rateLimitedUntil,
+        };
+        sendResponse(response);
+        return true;
+      }
+
       handleCheckGrammar(message)
         .then(sendResponse)
         .catch((err) => {
+          const msg = err instanceof Error ? err.message : "Unknown error";
+          // Parse retry-after from error message if present
+          const retryMatch = msg.match(/retry in (\d+(?:\.\d+)?)s/i);
+          if (msg.toLowerCase().includes("rate limit") || msg.toLowerCase().includes("quota")) {
+            const waitSecs = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : 60;
+            rateLimitedUntil = Date.now() + waitSecs * 1000;
+          }
           const response: CheckResponse = {
             type: "CHECK_GRAMMAR_RESULT",
             requestId: message.requestId,
             errors: [],
-            error: err instanceof Error ? err.message : "Unknown error",
+            error: msg,
+            rateLimitedUntil: rateLimitedUntil > Date.now() ? rateLimitedUntil : undefined,
           };
           sendResponse(response);
         });
@@ -30,6 +80,24 @@ async function handleCheckGrammar(
 ): Promise<CheckResponse> {
   const settings = await getSettings();
   const text = request.text.substring(0, MAX_TEXT_LENGTH);
+
+  // Check cache first
+  const cached = getCached(text);
+  if (cached) {
+    let errors = [...cached];
+    if (!settings.checkGrammar) errors = errors.filter((e) => e.type !== "grammar");
+    if (!settings.checkSpelling) errors = errors.filter((e) => e.type !== "spelling");
+    if (!settings.checkPunctuation) errors = errors.filter((e) => e.type !== "punctuation");
+    return { type: "CHECK_GRAMMAR_RESULT", requestId: request.requestId, errors };
+  }
+
+  // Abort any previous in-flight request from the same tab
+  const tabKey = request.requestId.split("-")[0]; // group by timestamp prefix
+  const prevAbort = inflightAborts.get("global");
+  if (prevAbort) prevAbort.abort();
+  const abortController = new AbortController();
+  inflightAborts.set("global", abortController);
+
   const { system, user } = buildGrammarCheckPrompt(text);
 
   let rawErrors: GrammarError[];
@@ -43,7 +111,7 @@ async function handleCheckGrammar(
         error: "OpenAI API key not configured",
       };
     }
-    rawErrors = await callOpenAI(system, user, settings.openaiApiKey);
+    rawErrors = await callOpenAI(system, user, settings.openaiApiKey, abortController.signal);
   } else {
     if (!settings.geminiApiKey) {
       return {
@@ -53,11 +121,17 @@ async function handleCheckGrammar(
         error: "Gemini API key not configured",
       };
     }
-    rawErrors = await callGemini(system, user, settings.geminiApiKey);
+    rawErrors = await callGemini(system, user, settings.geminiApiKey, abortController.signal);
   }
+
+  console.log("[AI Grammar Checker] Raw errors from API:", JSON.stringify(rawErrors));
 
   // Validate and filter errors
   let errors = validateErrors(rawErrors, text);
+  console.log("[AI Grammar Checker] Validated errors:", errors.length, JSON.stringify(errors));
+
+  // Cache the unfiltered result
+  setCache(text, errors);
 
   // Filter by user preferences
   if (!settings.checkGrammar) errors = errors.filter((e) => e.type !== "grammar");
@@ -74,10 +148,12 @@ async function handleCheckGrammar(
 async function callOpenAI(
   system: string,
   user: string,
-  apiKey: string
+  apiKey: string,
+  signal?: AbortSignal
 ): Promise<GrammarError[]> {
   const response = await fetch(OPENAI_API_URL, {
     method: "POST",
+    signal,
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
@@ -107,11 +183,13 @@ async function callOpenAI(
 async function callGemini(
   system: string,
   user: string,
-  apiKey: string
+  apiKey: string,
+  signal?: AbortSignal
 ): Promise<GrammarError[]> {
   const url = `${GEMINI_API_URL}?key=${apiKey}`;
   const response = await fetch(url, {
     method: "POST",
+    signal,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       systemInstruction: {

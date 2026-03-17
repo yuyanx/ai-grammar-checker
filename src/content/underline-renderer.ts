@@ -47,6 +47,16 @@ export function clearErrors(element: HTMLElement): void {
   }
 }
 
+/**
+ * Nuclear clear: remove all underline containers from the shadow DOM.
+ * Used when element-specific clear isn't working (e.g., stale element references).
+ */
+export function clearAllErrors(): void {
+  const root = getShadowRoot();
+  const containers = root.querySelectorAll("[id^='underlines-']");
+  containers.forEach((c) => { c.innerHTML = ""; });
+}
+
 export function errorKey(error: GrammarError): string {
   return `${error.offset}:${error.length}:${error.original}`;
 }

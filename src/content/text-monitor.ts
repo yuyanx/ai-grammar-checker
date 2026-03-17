@@ -5,9 +5,9 @@ import { updateWidget, removeWidget } from "./status-widget.js";
 import { showPopover } from "./popover.js";
 
 const elementStates = new WeakMap<HTMLElement, ElementState>();
-let debounceMs = 1500;
+let debounceMs = 800;
 let enabled = true;
-let rateLimitedUntil = 0; // timestamp — skip API calls until this time
+let configuredCache: boolean | null = null;
 
 // Privacy: skip these input types and field patterns
 const PRIVACY_SKIP_TYPES = new Set(["password", "hidden"]);
@@ -16,8 +16,7 @@ const PRIVACY_SKIP_AUTOCOMPLETE = /cc-|password|one-time-code/i;
 
 export async function startMonitoring(): Promise<void> {
   const settings = await getSettings();
-  // Enforce minimum 5 second debounce to avoid burning free tier quota
-  debounceMs = Math.max(settings.debounceMs, 5000);
+  debounceMs = settings.debounceMs;
   enabled = settings.enabled;
 
   if (!enabled) return;
@@ -56,10 +55,11 @@ export async function startMonitoring(): Promise<void> {
     if (changes.settings) {
       const newSettings = changes.settings.newValue as Record<string, any>;
       if (newSettings) {
-        debounceMs = (newSettings.debounceMs as number) || 1500;
+        configuredCache = null; // invalidate
+        debounceMs = (newSettings.debounceMs as number) || 800;
         enabled = newSettings.enabled as boolean;
         if (!enabled) {
-          document.querySelectorAll("textarea, input[type='text'], [contenteditable='true']").forEach((el) => {
+          document.querySelectorAll("textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only']").forEach((el) => {
             clearErrors(el as HTMLElement);
             removeWidget(el as HTMLElement);
           });
@@ -70,7 +70,7 @@ export async function startMonitoring(): Promise<void> {
 }
 
 function scanForElements(root: HTMLElement): void {
-  const selectors = "textarea, input[type='text'], input:not([type]), [contenteditable='true']";
+  const selectors = "textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only']";
   const elements: HTMLElement[] = root.matches?.(selectors) ? [root] : [];
   root.querySelectorAll<HTMLElement>(selectors).forEach((el) => elements.push(el));
 
@@ -128,8 +128,8 @@ function attachListeners(element: HTMLElement): void {
 }
 
 async function checkElement(element: HTMLElement): Promise<void> {
-  const configured = await isConfigured();
-  if (!configured) return;
+  if (configuredCache === null) configuredCache = await isConfigured();
+  if (!configuredCache) return;
 
   const state = elementStates.get(element);
   if (!state) return;
@@ -143,9 +143,6 @@ async function checkElement(element: HTMLElement): Promise<void> {
 
   // Skip empty, too short, or unchanged text
   if (!text.trim() || text.trim().length < 10 || text === state.lastText) return;
-
-  // Skip if rate limited
-  if (Date.now() < rateLimitedUntil) return;
 
   state.lastText = text;
 
@@ -164,10 +161,6 @@ async function checkElement(element: HTMLElement): Promise<void> {
     const response: CheckResponse = await chrome.runtime.sendMessage(request);
 
     if (response.error) {
-      if (response.error.toLowerCase().includes("rate limit") ||
-          response.error.toLowerCase().includes("quota exceeded")) {
-        rateLimitedUntil = Date.now() + 120000;
-      }
       updateWidget(element, "idle");
       return;
     }
@@ -220,11 +213,14 @@ function renderErrorsForElement(element: HTMLElement): void {
     state.errors,
     state.ignoredErrors,
     () => {
-      // On accept: re-check after a short delay
+      // On accept: clear all underlines immediately, then re-check after a delay
       const s = elementStates.get(element);
       if (s) {
+        s.errors = [];
         s.lastText = ""; // Force re-check
-        setTimeout(() => checkElement(element), 500);
+        clearErrors(element);
+        updateWidget(element, "idle");
+        setTimeout(() => checkElement(element), 300);
       }
     },
     (key: string) => {
@@ -250,7 +246,7 @@ function renderErrorsForElement(element: HTMLElement): void {
 
 function reRenderAll(): void {
   const allElements = document.querySelectorAll(
-    "textarea, input[type='text'], input:not([type]), [contenteditable='true']"
+    "textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only']"
   );
   for (const el of allElements) {
     if (el instanceof HTMLElement) {

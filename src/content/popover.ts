@@ -1,6 +1,7 @@
 import { GrammarError } from "../shared/types.js";
 import { getShadowRoot, getShadowHost } from "./shadow-host.js";
 import { isDarkMode } from "./dark-mode.js";
+import { clearErrors, clearAllErrors } from "./underline-renderer.js";
 
 let currentPopover: HTMLElement | null = null;
 let closeHandler: ((e: Event) => void) | null = null;
@@ -123,6 +124,8 @@ export function showPopover(
     e.stopPropagation();
     e.preventDefault();
     applyFix(targetElement, error);
+    clearErrors(targetElement);
+    clearAllErrors();
     showFixFlash(anchorRect);
     animateHidePopover();
     onAccept();
@@ -141,6 +144,8 @@ export function showPopover(
     e.stopPropagation();
     e.preventDefault();
     applyFix(targetElement, error);
+    clearErrors(targetElement);
+    clearAllErrors();
     showFixFlash(anchorRect);
     animateHidePopover();
     onAccept();
@@ -230,49 +235,70 @@ export function hidePopover(): void {
 }
 
 /**
- * Apply a grammar fix directly in the content script.
- * execCommand('insertText') preserves undo and works from the isolated world.
- * Must be called synchronously from a user gesture (click handler).
+ * Apply a grammar fix by setting the selection in the content script (isolated world),
+ * then delegating execCommand('insertText') to the MAIN world page-script via postMessage.
+ * Selection state is shared across worlds, so this approach works.
  */
+const appliedFixes = new Set<string>();
+
 function applyFix(
   element: HTMLElement | HTMLTextAreaElement | HTMLInputElement,
   error: GrammarError
 ): void {
+  // Guard against double application
+  const fixId = `${error.offset}:${error.original}:${error.suggestion}`;
+  if (appliedFixes.has(fixId)) return;
+  appliedFixes.add(fixId);
+  // Clean up after a delay
+  setTimeout(() => appliedFixes.delete(fixId), 2000);
+
   element.focus();
 
   if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
-    applyFixTextarea(element, error);
-  } else if (element.isContentEditable) {
-    applyFixContentEditable(element, error);
-  }
-}
+    // For input/textarea: direct value replacement using offset for accuracy.
+    // This avoids async execCommand issues where the selection can shift.
+    const value = element.value;
 
-function applyFixTextarea(
-  element: HTMLTextAreaElement | HTMLInputElement,
-  error: GrammarError
-): void {
-  const idx = element.value.indexOf(error.original);
-  if (idx === -1) return;
+    // Use error.offset first, fall back to indexOf
+    let idx = error.offset;
+    if (idx < 0 || value.substring(idx, idx + error.original.length) !== error.original) {
+      idx = value.indexOf(error.original);
+    }
+    if (idx === -1) return;
 
-  element.setSelectionRange(idx, idx + error.original.length);
-  const success = document.execCommand("insertText", false, error.suggestion);
+    // Try execCommand first (preserves undo history)
+    element.setSelectionRange(idx, idx + error.original.length);
+    const inserted = document.execCommand("insertText", false, error.suggestion);
 
-  if (!success) {
-    const before = element.value.substring(0, idx);
-    const after = element.value.substring(idx + error.original.length);
-    element.value = before + error.suggestion + after;
-    element.setSelectionRange(
-      idx + error.suggestion.length,
-      idx + error.suggestion.length
-    );
+    if (!inserted || element.value === value) {
+      // Fallback: direct value assignment
+      const before = value.substring(0, idx);
+      const after = value.substring(idx + error.original.length);
+      element.value = before + error.suggestion + after;
+    }
+
+    const cursorPos = idx + error.suggestion.length;
+    element.setSelectionRange(cursorPos, cursorPos);
     element.dispatchEvent(new Event("input", { bubbles: true }));
+  } else if (element.isContentEditable) {
+    const selectionSet = setContentEditableSelection(element, error);
+    if (selectionSet) {
+      // Delegate execCommand to MAIN world where it works for contentEditable
+      window.postMessage(
+        { type: "AI_GRAMMAR_APPLY_FIX", suggestion: error.suggestion },
+        "*"
+      );
+    }
   }
 }
 
-function applyFixContentEditable(
+/**
+ * Set selection range on a contentEditable element for the error text. Returns true if selection was set.
+ */
+function setContentEditableSelection(
   element: HTMLElement,
   error: GrammarError
-): void {
+): boolean {
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   const nodes: { node: Text; start: number }[] = [];
   let full = "";
@@ -283,7 +309,7 @@ function applyFixContentEditable(
   }
 
   const idx = full.indexOf(error.original);
-  if (idx === -1) return;
+  if (idx === -1) return false;
 
   let startNode: Text | null = null,
     startOffset = 0,
@@ -311,9 +337,10 @@ function applyFixContentEditable(
     if (sel) {
       sel.removeAllRanges();
       sel.addRange(range);
-      document.execCommand("insertText", false, error.suggestion);
+      return true;
     }
   }
+  return false;
 }
 
 function escapeHtml(str: string): string {
