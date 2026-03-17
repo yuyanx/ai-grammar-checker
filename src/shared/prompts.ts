@@ -21,11 +21,13 @@ Each error object must have:
 - "type": "grammar", "spelling", or "punctuation"
 - "explanation": brief reason
 
-Example: for input "how are your doing"
+Example: for input "i cant beleive its wendsday"
 {"errors": [
-  {"original": "how", "suggestion": "How", "offset": 0, "length": 3, "type": "grammar", "explanation": "Sentences should begin with a capital letter."},
-  {"original": "your", "suggestion": "you", "offset": 8, "length": 4, "type": "grammar", "explanation": "The possessive 'your' should be the pronoun 'you'."},
-  {"original": "doing", "suggestion": "doing?", "offset": 13, "length": 5, "type": "punctuation", "explanation": "A question should end with a question mark."}
+  {"original": "i", "suggestion": "I", "offset": 0, "length": 1, "type": "grammar", "explanation": "The pronoun 'I' should always be capitalized."},
+  {"original": "cant", "suggestion": "can't", "offset": 2, "length": 4, "type": "punctuation", "explanation": "Missing apostrophe in contraction."},
+  {"original": "beleive", "suggestion": "believe", "offset": 7, "length": 7, "type": "spelling", "explanation": "Misspelled word."},
+  {"original": "its", "suggestion": "it's", "offset": 15, "length": 3, "type": "grammar", "explanation": "Use 'it's' (contraction of 'it is') instead of the possessive 'its'."},
+  {"original": "wendsday", "suggestion": "Wednesday", "offset": 19, "length": 8, "type": "spelling", "explanation": "Misspelled word."}
 ]}
 
 Rules:
