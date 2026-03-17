@@ -15,8 +15,7 @@ const PRIVACY_SKIP_AUTOCOMPLETE = /cc-|password|one-time-code/i;
 
 export async function startMonitoring(): Promise<void> {
   const settings = await getSettings();
-  // Enforce minimum 5 second debounce to avoid burning free tier quota
-  debounceMs = Math.max(settings.debounceMs, 5000);
+  debounceMs = settings.debounceMs;
   enabled = settings.enabled;
 
   if (!enabled) return;
@@ -141,8 +140,7 @@ async function checkElement(element: HTMLElement): Promise<void> {
   }
 
   // Skip empty, too short, or unchanged text
-  // Free tier is only 20 requests/day — require at least 30 chars to avoid wasting quota
-  if (!text.trim() || text.trim().length < 30 || text === state.lastText) return;
+  if (!text.trim() || text.trim().length < 10 || text === state.lastText) return;
 
   state.lastText = text;
 
@@ -220,7 +218,7 @@ function renderErrorsForElement(element: HTMLElement): void {
         s.lastText = ""; // Force re-check
         clearErrors(element);
         updateWidget(element, "idle");
-        setTimeout(() => checkElement(element), 1000);
+        setTimeout(() => checkElement(element), 300);
       }
     },
     (key: string) => {
