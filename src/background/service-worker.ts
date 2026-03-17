@@ -124,8 +124,11 @@ async function handleCheckGrammar(
     rawErrors = await callGemini(system, user, settings.geminiApiKey, abortController.signal);
   }
 
+  console.log("[AI Grammar Checker] Raw errors from API:", JSON.stringify(rawErrors));
+
   // Validate and filter errors
   let errors = validateErrors(rawErrors, text);
+  console.log("[AI Grammar Checker] Validated errors:", errors.length, JSON.stringify(errors));
 
   // Cache the unfiltered result
   setCache(text, errors);
