@@ -141,7 +141,8 @@ async function checkElement(element: HTMLElement): Promise<void> {
   }
 
   // Skip empty, too short, or unchanged text
-  if (!text.trim() || text.trim().length < 10 || text === state.lastText) return;
+  // Free tier is only 20 requests/day — require at least 30 chars to avoid wasting quota
+  if (!text.trim() || text.trim().length < 30 || text === state.lastText) return;
 
   state.lastText = text;
 
