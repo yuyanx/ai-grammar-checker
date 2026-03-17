@@ -220,11 +220,14 @@ function renderErrorsForElement(element: HTMLElement): void {
     state.errors,
     state.ignoredErrors,
     () => {
-      // On accept: re-check after a short delay
+      // On accept: clear all underlines immediately, then re-check after a delay
       const s = elementStates.get(element);
       if (s) {
+        s.errors = [];
         s.lastText = ""; // Force re-check
-        setTimeout(() => checkElement(element), 500);
+        clearErrors(element);
+        updateWidget(element, "idle");
+        setTimeout(() => checkElement(element), 1000);
       }
     },
     (key: string) => {

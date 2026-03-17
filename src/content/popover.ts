@@ -234,10 +234,19 @@ export function hidePopover(): void {
  * then delegating execCommand('insertText') to the MAIN world page-script via postMessage.
  * Selection state is shared across worlds, so this approach works.
  */
+const appliedFixes = new Set<string>();
+
 function applyFix(
   element: HTMLElement | HTMLTextAreaElement | HTMLInputElement,
   error: GrammarError
 ): void {
+  // Guard against double application
+  const fixId = `${error.offset}:${error.original}:${error.suggestion}`;
+  if (appliedFixes.has(fixId)) return;
+  appliedFixes.add(fixId);
+  // Clean up after a delay
+  setTimeout(() => appliedFixes.delete(fixId), 2000);
+
   element.focus();
 
   let selectionSet = false;
@@ -249,20 +258,23 @@ function applyFix(
   }
 
   if (selectionSet) {
+    // Snapshot value before sending to MAIN world
+    const valueBefore = (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement)
+      ? element.value : null;
+
     // Delegate execCommand to MAIN world where it actually works
     window.postMessage(
       { type: "AI_GRAMMAR_APPLY_FIX", suggestion: error.suggestion },
       "*"
     );
 
-    // Fallback for textareas: if execCommand didn't work in MAIN world,
-    // do a direct value replacement after a short delay
-    if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
-      const el = element;
-      const originalValue = el.value;
+    // Fallback for textareas only: if execCommand didn't work in MAIN world,
+    // do a direct value replacement after a delay
+    if (valueBefore !== null) {
+      const el = element as HTMLTextAreaElement | HTMLInputElement;
       setTimeout(() => {
-        // If value hasn't changed, execCommand failed — use direct replacement
-        if (el.value === originalValue) {
+        // Only apply fallback if the value is completely unchanged
+        if (el.value === valueBefore) {
           const idx = el.value.indexOf(error.original);
           if (idx === -1) return;
           const before = el.value.substring(0, idx);
@@ -273,9 +285,8 @@ function applyFix(
             idx + error.suggestion.length
           );
           el.dispatchEvent(new Event("input", { bubbles: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
         }
-      }, 50);
+      }, 100);
     }
   }
 }
