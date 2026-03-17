@@ -3,6 +3,7 @@ import { getSettings, isConfigured } from "../shared/storage.js";
 import { renderErrors, clearErrors, errorKey } from "./underline-renderer.js";
 import { updateWidget, removeWidget } from "./status-widget.js";
 import { showPopover } from "./popover.js";
+import { showErrorPanel, hideErrorPanel } from "./error-panel.js";
 
 const elementStates = new WeakMap<HTMLElement, ElementState>();
 let debounceMs = 800;
@@ -184,13 +185,48 @@ async function checkElement(element: HTMLElement): Promise<void> {
 
     if (visibleErrors.length > 0) {
       updateWidget(element, "errors", visibleErrors.length, () => {
-        // Click widget → show first error's popover
-        if (visibleErrors.length > 0) {
-          const firstError = visibleErrors[0];
-          // Trigger a re-render which will create the underlines,
-          // then we can show the popover for the first error
-          renderErrorsForElement(element);
-        }
+        // Click widget → show error panel listing all errors
+        const currentState = elementStates.get(element);
+        if (!currentState) return;
+
+        const currentVisible = currentState.errors.filter(
+          (e) => !currentState.ignoredErrors.has(errorKey(e))
+        );
+        if (currentVisible.length === 0) return;
+
+        showErrorPanel(
+          element,
+          currentVisible,
+          currentState.ignoredErrors,
+          element.getBoundingClientRect(),
+          () => {
+            // onAccept: clear errors and re-check
+            const s = elementStates.get(element);
+            if (s) {
+              s.errors = [];
+              s.lastText = "";
+              clearErrors(element);
+              updateWidget(element, "idle");
+              setTimeout(() => checkElement(element), 300);
+            }
+          },
+          (key: string) => {
+            // onDismiss: add to ignored set and update
+            const s = elementStates.get(element);
+            if (s) {
+              s.ignoredErrors.add(key);
+              renderErrorsForElement(element);
+              const remaining = s.errors.filter(
+                (e) => !s.ignoredErrors.has(errorKey(e))
+              );
+              if (remaining.length > 0) {
+                updateWidget(element, "errors", remaining.length);
+              } else {
+                updateWidget(element, "clean");
+              }
+            }
+          }
+        );
       });
     } else {
       updateWidget(element, "clean");
