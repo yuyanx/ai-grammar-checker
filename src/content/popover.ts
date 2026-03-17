@@ -230,9 +230,9 @@ export function hidePopover(): void {
 }
 
 /**
- * Apply a grammar fix directly in the content script.
- * execCommand('insertText') preserves undo and works from the isolated world.
- * Must be called synchronously from a user gesture (click handler).
+ * Apply a grammar fix by setting the selection in the content script (isolated world),
+ * then delegating execCommand('insertText') to the MAIN world page-script via postMessage.
+ * Selection state is shared across worlds, so this approach works.
  */
 function applyFix(
   element: HTMLElement | HTMLTextAreaElement | HTMLInputElement,
@@ -240,39 +240,66 @@ function applyFix(
 ): void {
   element.focus();
 
+  let selectionSet = false;
+
   if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
-    applyFixTextarea(element, error);
+    selectionSet = setTextareaSelection(element, error);
   } else if (element.isContentEditable) {
-    applyFixContentEditable(element, error);
+    selectionSet = setContentEditableSelection(element, error);
+  }
+
+  if (selectionSet) {
+    // Delegate execCommand to MAIN world where it actually works
+    window.postMessage(
+      { type: "AI_GRAMMAR_APPLY_FIX", suggestion: error.suggestion },
+      "*"
+    );
+
+    // Fallback for textareas: if execCommand didn't work in MAIN world,
+    // do a direct value replacement after a short delay
+    if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+      const el = element;
+      const originalValue = el.value;
+      setTimeout(() => {
+        // If value hasn't changed, execCommand failed — use direct replacement
+        if (el.value === originalValue) {
+          const idx = el.value.indexOf(error.original);
+          if (idx === -1) return;
+          const before = el.value.substring(0, idx);
+          const after = el.value.substring(idx + error.original.length);
+          el.value = before + error.suggestion + after;
+          el.setSelectionRange(
+            idx + error.suggestion.length,
+            idx + error.suggestion.length
+          );
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      }, 50);
+    }
   }
 }
 
-function applyFixTextarea(
+/**
+ * Set selection range on a textarea/input for the error text. Returns true if selection was set.
+ */
+function setTextareaSelection(
   element: HTMLTextAreaElement | HTMLInputElement,
   error: GrammarError
-): void {
+): boolean {
   const idx = element.value.indexOf(error.original);
-  if (idx === -1) return;
-
+  if (idx === -1) return false;
   element.setSelectionRange(idx, idx + error.original.length);
-  const success = document.execCommand("insertText", false, error.suggestion);
-
-  if (!success) {
-    const before = element.value.substring(0, idx);
-    const after = element.value.substring(idx + error.original.length);
-    element.value = before + error.suggestion + after;
-    element.setSelectionRange(
-      idx + error.suggestion.length,
-      idx + error.suggestion.length
-    );
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-  }
+  return true;
 }
 
-function applyFixContentEditable(
+/**
+ * Set selection range on a contentEditable element for the error text. Returns true if selection was set.
+ */
+function setContentEditableSelection(
   element: HTMLElement,
   error: GrammarError
-): void {
+): boolean {
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   const nodes: { node: Text; start: number }[] = [];
   let full = "";
@@ -283,7 +310,7 @@ function applyFixContentEditable(
   }
 
   const idx = full.indexOf(error.original);
-  if (idx === -1) return;
+  if (idx === -1) return false;
 
   let startNode: Text | null = null,
     startOffset = 0,
@@ -311,9 +338,10 @@ function applyFixContentEditable(
     if (sel) {
       sel.removeAllRanges();
       sel.addRange(range);
-      document.execCommand("insertText", false, error.suggestion);
+      return true;
     }
   }
+  return false;
 }
 
 function escapeHtml(str: string): string {
