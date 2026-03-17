@@ -49,7 +49,7 @@ chrome.runtime.onMessage.addListener(
         return true;
       }
 
-      handleCheckGrammar(message)
+      handleCheckGrammar(message, sender)
         .then(sendResponse)
         .catch((err) => {
           const msg = err instanceof Error ? err.message : "Unknown error";
@@ -76,7 +76,8 @@ chrome.runtime.onMessage.addListener(
 );
 
 async function handleCheckGrammar(
-  request: CheckRequest
+  request: CheckRequest,
+  sender: chrome.runtime.MessageSender
 ): Promise<CheckResponse> {
   const settings = await getSettings();
   const text = request.text.substring(0, MAX_TEXT_LENGTH);
@@ -91,37 +92,45 @@ async function handleCheckGrammar(
     return { type: "CHECK_GRAMMAR_RESULT", requestId: request.requestId, errors };
   }
 
-  // Abort any previous in-flight request from the same tab
-  const tabKey = request.requestId.split("-")[0]; // group by timestamp prefix
-  const prevAbort = inflightAborts.get("global");
+  // Abort any previous in-flight request from the same tab/frame only.
+  const frameId = sender.frameId ?? 0;
+  const abortKey = `${sender.tab?.id ?? "global"}:${frameId}`;
+  const prevAbort = inflightAborts.get(abortKey);
   if (prevAbort) prevAbort.abort();
   const abortController = new AbortController();
-  inflightAborts.set("global", abortController);
+  inflightAborts.set(abortKey, abortController);
 
   const { system, user } = buildGrammarCheckPrompt(text);
 
   let rawErrors: GrammarError[];
 
-  if (settings.provider === "openai") {
-    if (!settings.openaiApiKey) {
-      return {
-        type: "CHECK_GRAMMAR_RESULT",
-        requestId: request.requestId,
-        errors: [],
-        error: "OpenAI API key not configured",
-      };
+  try {
+    if (settings.provider === "openai") {
+      if (!settings.openaiApiKey) {
+        return {
+          type: "CHECK_GRAMMAR_RESULT",
+          requestId: request.requestId,
+          errors: [],
+          error: "OpenAI API key not configured",
+        };
+      }
+      rawErrors = await callOpenAI(system, user, settings.openaiApiKey, abortController.signal);
+    } else {
+      if (!settings.geminiApiKey) {
+        return {
+          type: "CHECK_GRAMMAR_RESULT",
+          requestId: request.requestId,
+          errors: [],
+          error: "Gemini API key not configured",
+        };
+      }
+      rawErrors = await callGemini(system, user, settings.geminiApiKey, abortController.signal);
     }
-    rawErrors = await callOpenAI(system, user, settings.openaiApiKey, abortController.signal);
-  } else {
-    if (!settings.geminiApiKey) {
-      return {
-        type: "CHECK_GRAMMAR_RESULT",
-        requestId: request.requestId,
-        errors: [],
-        error: "Gemini API key not configured",
-      };
+  } finally {
+    // Avoid deleting a newer controller that replaced this one.
+    if (inflightAborts.get(abortKey) === abortController) {
+      inflightAborts.delete(abortKey);
     }
-    rawErrors = await callGemini(system, user, settings.geminiApiKey, abortController.signal);
   }
 
   console.log("[AI Grammar Checker] Raw errors from API:", JSON.stringify(rawErrors));

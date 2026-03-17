@@ -81,7 +81,8 @@ async function testConnection(): Promise<void> {
     return;
   }
 
-  // Save temporarily for the test
+  // Save temporarily for the test, then restore original settings.
+  const originalSettings = await getSettings();
   await saveSettings({
     provider,
     ...(provider === "openai" ? { openaiApiKey: key } : { geminiApiKey: key }),
@@ -107,6 +108,12 @@ async function testConnection(): Promise<void> {
   } catch (err) {
     resultEl.textContent = `Connection failed: ${err}`;
     resultEl.className = "test-result test-result--error";
+  } finally {
+    await saveSettings({
+      provider: originalSettings.provider,
+      openaiApiKey: originalSettings.openaiApiKey,
+      geminiApiKey: originalSettings.geminiApiKey,
+    });
   }
 }
 
