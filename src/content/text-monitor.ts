@@ -5,8 +5,9 @@ import { updateWidget, removeWidget } from "./status-widget.js";
 import { showPopover } from "./popover.js";
 
 const elementStates = new WeakMap<HTMLElement, ElementState>();
-let debounceMs = 1500;
+let debounceMs = 800;
 let enabled = true;
+let configuredCache: boolean | null = null;
 
 // Privacy: skip these input types and field patterns
 const PRIVACY_SKIP_TYPES = new Set(["password", "hidden"]);
@@ -54,7 +55,8 @@ export async function startMonitoring(): Promise<void> {
     if (changes.settings) {
       const newSettings = changes.settings.newValue as Record<string, any>;
       if (newSettings) {
-        debounceMs = (newSettings.debounceMs as number) || 1500;
+        configuredCache = null; // invalidate
+        debounceMs = (newSettings.debounceMs as number) || 800;
         enabled = newSettings.enabled as boolean;
         if (!enabled) {
           document.querySelectorAll("textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only']").forEach((el) => {
@@ -126,8 +128,8 @@ function attachListeners(element: HTMLElement): void {
 }
 
 async function checkElement(element: HTMLElement): Promise<void> {
-  const configured = await isConfigured();
-  if (!configured) return;
+  if (configuredCache === null) configuredCache = await isConfigured();
+  if (!configuredCache) return;
 
   const state = elementStates.get(element);
   if (!state) return;
