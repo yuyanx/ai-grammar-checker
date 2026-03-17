@@ -2,7 +2,7 @@ import { GrammarError, CheckRequest, CheckResponse, ElementState } from "../shar
 import { getSettings, isConfigured } from "../shared/storage.js";
 import { renderErrors, clearErrors, errorKey } from "./underline-renderer.js";
 import { updateWidget, removeWidget } from "./status-widget.js";
-import { showPopover } from "./popover.js";
+import { showErrorPanel, hideErrorPanel } from "./error-panel.js";
 
 const elementStates = new WeakMap<HTMLElement, ElementState>();
 let debounceMs = 800;
@@ -112,6 +112,8 @@ function attachListeners(element: HTMLElement): void {
   const handler = () => {
     if (!enabled) return;
 
+    hideErrorPanel();
+
     const currentState = elementStates.get(element);
     if (!currentState) return;
 
@@ -184,13 +186,7 @@ async function checkElement(element: HTMLElement): Promise<void> {
 
     if (visibleErrors.length > 0) {
       updateWidget(element, "errors", visibleErrors.length, () => {
-        // Click widget → show first error's popover
-        if (visibleErrors.length > 0) {
-          const firstError = visibleErrors[0];
-          // Trigger a re-render which will create the underlines,
-          // then we can show the popover for the first error
-          renderErrorsForElement(element);
-        }
+        openErrorPanelForElement(element);
       });
     } else {
       updateWidget(element, "clean");
@@ -235,13 +231,54 @@ function renderErrorsForElement(element: HTMLElement): void {
           (e) => !s.ignoredErrors.has(errorKey(e))
         );
         if (visibleErrors.length > 0) {
-          updateWidget(element, "errors", visibleErrors.length);
+          updateWidget(element, "errors", visibleErrors.length, () => openErrorPanelForElement(element));
         } else {
           updateWidget(element, "clean");
         }
       }
     }
   );
+}
+
+
+function openErrorPanelForElement(element: HTMLElement): void {
+  const state = elementStates.get(element);
+  if (!state) return;
+
+  const visibleErrors = state.errors.filter(
+    (e) => !state.ignoredErrors.has(errorKey(e))
+  );
+  if (visibleErrors.length === 0) return;
+
+  showErrorPanel({
+    targetElement: element,
+    errors: visibleErrors,
+    anchorRect: element.getBoundingClientRect(),
+    onAccept: () => {
+      const s = elementStates.get(element);
+      if (!s) return;
+      s.errors = [];
+      s.lastText = "";
+      clearErrors(element);
+      updateWidget(element, "idle");
+      setTimeout(() => checkElement(element), 300);
+    },
+    onDismiss: (error) => {
+      const s = elementStates.get(element);
+      if (!s) return;
+      s.ignoredErrors.add(errorKey(error));
+      renderErrorsForElement(element);
+
+      const remainingVisibleErrors = s.errors.filter(
+        (e) => !s.ignoredErrors.has(errorKey(e))
+      );
+      if (remainingVisibleErrors.length > 0) {
+        updateWidget(element, "errors", remainingVisibleErrors.length, () => openErrorPanelForElement(element));
+      } else {
+        updateWidget(element, "clean");
+      }
+    },
+  });
 }
 
 function reRenderAll(): void {

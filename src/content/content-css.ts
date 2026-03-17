@@ -318,6 +318,195 @@ export const CONTENT_CSS = `
     opacity: 1;
   }
 
+
+  /* ===== ERROR PANEL ===== */
+  .grammar-error-panel {
+    position: fixed;
+    z-index: 2147483647;
+    width: 360px;
+    max-height: 400px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #1a202c;
+    animation: grammar-fade-in 0.15s ease-out;
+  }
+
+  .grammar-error-panel__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .grammar-error-panel__title {
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .grammar-error-panel__header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .grammar-error-panel__close {
+    border: none;
+    background: transparent;
+    color: #718096;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .grammar-error-panel__list {
+    max-height: 340px;
+    overflow: auto;
+    padding: 8px;
+  }
+
+  .grammar-error-panel__item {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 8px;
+    background: #f7fafc;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+  }
+
+  .grammar-error-panel__item--removing {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+
+  .grammar-error-panel__badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+
+  .grammar-error-panel__badge--spelling {
+    background: #fed7d7;
+    color: #c53030;
+  }
+
+  .grammar-error-panel__badge--grammar {
+    background: #bee3f8;
+    color: #2b6cb0;
+  }
+
+  .grammar-error-panel__badge--punctuation {
+    background: #c6f6d5;
+    color: #276749;
+  }
+
+  .grammar-error-panel__correction {
+    margin-top: 8px;
+    font-size: 14px;
+  }
+
+  .grammar-error-panel__original {
+    color: #e53e3e;
+    text-decoration: line-through;
+  }
+
+  .grammar-error-panel__arrow {
+    color: #a0aec0;
+    margin: 0 6px;
+  }
+
+  .grammar-error-panel__suggestion {
+    color: #38a169;
+    font-weight: 600;
+  }
+
+  .grammar-error-panel__explanation {
+    margin-top: 8px;
+    color: #718096;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .grammar-error-panel__actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .grammar-error-panel__btn {
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .grammar-error-panel__btn--primary {
+    background: #4299e1;
+    color: #fff;
+  }
+
+  .grammar-error-panel__btn--primary:hover {
+    background: #3182ce;
+  }
+
+  .grammar-error-panel__btn--secondary {
+    background: #edf2f7;
+    color: #4a5568;
+  }
+
+  .grammar-error-panel__btn--secondary:hover {
+    background: #e2e8f0;
+  }
+
+  .grammar-error-panel__success {
+    text-align: center;
+    padding: 24px 12px;
+    color: #38a169;
+    font-weight: 700;
+    font-size: 15px;
+  }
+
+  .grammar-error-panel--dark {
+    background: #1a202c;
+    border-color: #4a5568;
+    color: #e2e8f0;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+
+  .grammar-error-panel--dark .grammar-error-panel__header,
+  .grammar-error-panel--dark .grammar-error-panel__item {
+    border-color: #4a5568;
+  }
+
+  .grammar-error-panel--dark .grammar-error-panel__item {
+    background: #2d3748;
+  }
+
+  .grammar-error-panel--dark .grammar-error-panel__close,
+  .grammar-error-panel--dark .grammar-error-panel__explanation {
+    color: #a0aec0;
+  }
+
+  .grammar-error-panel--dark .grammar-error-panel__btn--secondary {
+    background: #2d3748;
+    color: #a0aec0;
+  }
+
+  .grammar-error-panel--dark .grammar-error-panel__btn--secondary:hover {
+    background: #4a5568;
+  }
+
   /* ===== DARK MODE ===== */
   :host-context([data-grammar-dark="true"]) .grammar-popover,
   .grammar-popover--dark {

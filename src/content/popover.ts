@@ -194,7 +194,7 @@ export function showPopover(
 /**
  * Brief green flash over corrected text (Grammarly-style positive feedback).
  */
-function showFixFlash(rect: DOMRect): void {
+export function showFixFlash(rect: DOMRect): void {
   const root = getShadowRoot();
   const flash = document.createElement("div");
   flash.className = "grammar-fix-flash";
@@ -241,7 +241,7 @@ export function hidePopover(): void {
  */
 const appliedFixes = new Set<string>();
 
-function applyFix(
+export function applyFix(
   element: HTMLElement | HTMLTextAreaElement | HTMLInputElement,
   error: GrammarError
 ): void {
@@ -343,7 +343,7 @@ function setContentEditableSelection(
   return false;
 }
 
-function escapeHtml(str: string): string {
+export function escapeHtml(str: string): string {
   const div = document.createElement("div");
   div.textContent = str;
   return div.innerHTML;
