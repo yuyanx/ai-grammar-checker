@@ -59,7 +59,7 @@ export async function startMonitoring(): Promise<void> {
         debounceMs = (newSettings.debounceMs as number) || 1500;
         enabled = newSettings.enabled as boolean;
         if (!enabled) {
-          document.querySelectorAll("textarea, input[type='text'], [contenteditable='true']").forEach((el) => {
+          document.querySelectorAll("textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only']").forEach((el) => {
             clearErrors(el as HTMLElement);
             removeWidget(el as HTMLElement);
           });
@@ -70,7 +70,7 @@ export async function startMonitoring(): Promise<void> {
 }
 
 function scanForElements(root: HTMLElement): void {
-  const selectors = "textarea, input[type='text'], input:not([type]), [contenteditable='true']";
+  const selectors = "textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only']";
   const elements: HTMLElement[] = root.matches?.(selectors) ? [root] : [];
   root.querySelectorAll<HTMLElement>(selectors).forEach((el) => elements.push(el));
 
@@ -250,7 +250,7 @@ function renderErrorsForElement(element: HTMLElement): void {
 
 function reRenderAll(): void {
   const allElements = document.querySelectorAll(
-    "textarea, input[type='text'], input:not([type]), [contenteditable='true']"
+    "textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only']"
   );
   for (const el of allElements) {
     if (el instanceof HTMLElement) {
