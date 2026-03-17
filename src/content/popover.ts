@@ -1,6 +1,7 @@
 import { GrammarError } from "../shared/types.js";
 import { getShadowRoot, getShadowHost } from "./shadow-host.js";
 import { isDarkMode } from "./dark-mode.js";
+import { clearErrors, clearAllErrors } from "./underline-renderer.js";
 
 let currentPopover: HTMLElement | null = null;
 let closeHandler: ((e: Event) => void) | null = null;
@@ -123,6 +124,8 @@ export function showPopover(
     e.stopPropagation();
     e.preventDefault();
     applyFix(targetElement, error);
+    clearErrors(targetElement);
+    clearAllErrors();
     showFixFlash(anchorRect);
     animateHidePopover();
     onAccept();
@@ -141,6 +144,8 @@ export function showPopover(
     e.stopPropagation();
     e.preventDefault();
     applyFix(targetElement, error);
+    clearErrors(targetElement);
+    clearAllErrors();
     showFixFlash(anchorRect);
     animateHidePopover();
     onAccept();
