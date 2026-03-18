@@ -87,8 +87,23 @@ export async function startMonitoring(): Promise<void> {
     const target = e.target;
     if (!(target instanceof HTMLElement)) return;
 
-    // Check the focused element itself, or walk up to find a contenteditable ancestor
-    const el = target.closest<HTMLElement>(TEXT_INPUT_SELECTORS) || (target.isContentEditable ? target : null);
+    // Check the focused element itself, or walk up to find a contenteditable ancestor.
+    // For complex editors (LinkedIn, Notion), the focusin target may be a child element
+    // deep inside the contenteditable — walk up to find the outermost editable root.
+    let el = target.closest<HTMLElement>(TEXT_INPUT_SELECTORS);
+    if (!el && target.isContentEditable) {
+      // Walk up to find the highest contenteditable ancestor (the editor root),
+      // rather than attaching to an inner <p> or <span>.
+      el = target;
+      let parent = el.parentElement;
+      while (parent && parent !== document.body && parent.isContentEditable) {
+        // Prefer parent if it has an explicit contenteditable attribute
+        if (parent.hasAttribute("contenteditable")) {
+          el = parent;
+        }
+        parent = parent.parentElement;
+      }
+    }
     if (el && !elementStates.has(el)) {
       if (!shouldSkipElement(el)) {
         attachListeners(el);
@@ -167,6 +182,25 @@ export async function startMonitoring(): Promise<void> {
 
 const TEXT_INPUT_SELECTORS = "textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only'], [role='textbox'][contenteditable]";
 
+/**
+ * Normalize text for comparison: trim trailing whitespace/newlines that
+ * contenteditable editors (LinkedIn, Medium, etc.) add inconsistently
+ * due to <br>, <p>, and other block-level element changes.
+ */
+function normalizeText(text: string): string {
+  return text.replace(/[\n\r\s]+$/, "");
+}
+
+/**
+ * Extract text from an element, normalizing for contenteditable quirks.
+ */
+function getElementText(element: HTMLElement): string {
+  if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+    return element.value;
+  }
+  return element.innerText;
+}
+
 function scanForElements(root: HTMLElement): void {
   const elements: HTMLElement[] = root.matches?.(TEXT_INPUT_SELECTORS) ? [root] : [];
   root.querySelectorAll<HTMLElement>(TEXT_INPUT_SELECTORS).forEach((el) => elements.push(el));
@@ -238,9 +272,7 @@ function attachListeners(element: HTMLElement): void {
     }
 
     // Get current text to check if it's now empty
-    const currentText = element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
-      ? element.value
-      : element.innerText;
+    const currentText = normalizeText(getElementText(element));
 
     if (!currentText.trim() || currentText.trim().length < 10) {
       // Text is empty or too short — clear everything and don't schedule a check
@@ -266,9 +298,20 @@ function attachListeners(element: HTMLElement): void {
   element.addEventListener("input", handler);
   element.addEventListener("keyup", handler);
 
-  // For contenteditable, also watch for DOM mutations
+  // For contenteditable, also watch for DOM mutations.
+  // Use a microtask-debounced callback to avoid firing the handler dozens of times
+  // when rich text editors (LinkedIn, Notion) batch DOM mutations.
   if (element.isContentEditable) {
-    const observer = new MutationObserver(() => handler());
+    let mutationPending = false;
+    const observer = new MutationObserver(() => {
+      if (!mutationPending) {
+        mutationPending = true;
+        queueMicrotask(() => {
+          mutationPending = false;
+          handler();
+        });
+      }
+    });
     observer.observe(element, { childList: true, subtree: true, characterData: true });
   }
 }
@@ -280,12 +323,8 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
   const state = elementStates.get(element);
   if (!state) return;
 
-  let text: string;
-  if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
-    text = element.value;
-  } else {
-    text = element.innerText;
-  }
+  const rawText = getElementText(element);
+  const text = normalizeText(rawText);
 
   // If text is empty or too short, clear existing errors and return
   if (!text.trim() || text.trim().length < 10) {
@@ -298,7 +337,8 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
     return;
   }
 
-  // Skip unchanged text
+  // Skip unchanged text (normalized comparison to avoid spurious rechecks
+  // from contenteditable editors that add/remove trailing whitespace)
   if (text === state.lastText) return;
 
   state.lastText = text;
@@ -323,9 +363,9 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
     }
 
     // Only apply if text hasn't changed since we sent the request
-    const currentText = element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
-      ? element.value
-      : element.innerText;
+    // Use normalized comparison — contenteditable editors (LinkedIn, Medium)
+    // frequently mutate trailing whitespace/newlines between check and response
+    const currentText = normalizeText(getElementText(element));
 
     if (currentText !== text) {
       updateWidget(element, "idle");
