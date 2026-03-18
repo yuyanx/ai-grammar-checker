@@ -3,6 +3,7 @@ import { getShadowRoot, getShadowHost } from "./shadow-host.js";
 import { isDarkMode } from "./dark-mode.js";
 import { applyFix, escapeHtml, hidePopover } from "./popover.js";
 import { errorKey } from "./underline-renderer.js";
+import { trackAppliedFix } from "./text-monitor.js";
 
 let currentPanel: HTMLElement | null = null;
 let currentElement: HTMLElement | null = null;
@@ -234,6 +235,11 @@ function applyAllFixes(
   items.forEach((item) => {
     (item as HTMLElement).classList.add("grammar-error-panel__item--removing");
   });
+
+  // Track all fixes to prevent oscillation on re-check
+  for (const err of errors) {
+    trackAppliedFix(element, err.original, err.suggestion);
+  }
 
   if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
     element.focus();

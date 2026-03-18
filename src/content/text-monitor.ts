@@ -10,6 +10,35 @@ let debounceMs = 800;
 let enabled = true;
 let configuredCache: boolean | null = null;
 
+// Track recently applied fixes to prevent oscillation (suggestion reverting back to original)
+// Maps element → Set of "suggestion→original" pairs that should be suppressed
+const recentFixes = new WeakMap<HTMLElement, Map<string, number>>();
+const RECENT_FIX_TTL = 10000; // suppress reverse suggestions for 10 seconds
+
+export function trackAppliedFix(element: HTMLElement, original: string, suggestion: string): void {
+  let fixes = recentFixes.get(element);
+  if (!fixes) {
+    fixes = new Map();
+    recentFixes.set(element, fixes);
+  }
+  // Key: if AI suggests reverting suggestion back to original, suppress it
+  const key = `${suggestion.toLowerCase()}→${original.toLowerCase()}`;
+  fixes.set(key, Date.now());
+}
+
+function isReverseFix(element: HTMLElement, error: GrammarError): boolean {
+  const fixes = recentFixes.get(element);
+  if (!fixes) return false;
+  const key = `${error.original.toLowerCase()}→${error.suggestion.toLowerCase()}`;
+  const timestamp = fixes.get(key);
+  if (!timestamp) return false;
+  if (Date.now() - timestamp > RECENT_FIX_TTL) {
+    fixes.delete(key);
+    return false;
+  }
+  return true;
+}
+
 // Privacy: skip these input types and field patterns
 const PRIVACY_SKIP_TYPES = new Set(["password", "hidden"]);
 const PRIVACY_SKIP_NAMES = /password|passwd|secret|token|ssn|credit.?card|cvv|cvc|api.?key/i;
@@ -218,7 +247,8 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
       return;
     }
 
-    state.errors = response.errors;
+    // Filter out errors that would reverse a recently applied fix (prevents oscillation)
+    state.errors = response.errors.filter((e) => !isReverseFix(element, e));
     state.correctedText = response.correctedText;
 
     // Update widget state

@@ -36,6 +36,7 @@ Rules:
 - For missing punctuation at end of text, include the last word as "original" and append the punctuation in "suggestion".
 - Only fix genuine errors. Do not alter meaning, tone, or style.
 - Do NOT hallucinate errors.
+- Each correction MUST be consistent with ALL other corrections. The correctedText must be grammatically correct as a whole. Do not suggest a fix that creates a new error when combined with other fixes (e.g., do not suggest "hows" → "How's" if the next word is "are", since "How's are" is ungrammatical — instead suggest "hows" → "How").
 - If no errors, return {"correctedText": "<the original text>", "errors": []}.
 - Output ONLY the JSON object.`;
 

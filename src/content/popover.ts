@@ -2,6 +2,7 @@ import { GrammarError } from "../shared/types.js";
 import { getShadowRoot, getShadowHost } from "./shadow-host.js";
 import { isDarkMode } from "./dark-mode.js";
 import { clearErrors, clearAllErrors } from "./underline-renderer.js";
+import { trackAppliedFix } from "./text-monitor.js";
 
 let currentPopover: HTMLElement | null = null;
 let closeHandler: ((e: Event) => void) | null = null;
@@ -251,6 +252,9 @@ export function applyFix(
   appliedFixes.add(fixId);
   // Clean up after a delay
   setTimeout(() => appliedFixes.delete(fixId), 2000);
+
+  // Track this fix to prevent the re-check from suggesting reverting it
+  trackAppliedFix(element, error.original, error.suggestion);
 
   element.focus();
 
