@@ -62,6 +62,7 @@ export function validateErrors(
     if (
       !err.original ||
       !err.suggestion ||
+      err.original === err.suggestion ||
       typeof err.type !== "string" ||
       !["grammar", "spelling", "punctuation"].includes(err.type)
     ) {

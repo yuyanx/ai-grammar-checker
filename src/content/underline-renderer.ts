@@ -1,5 +1,5 @@
 import { GrammarError } from "../shared/types.js";
-import { getOrCreateContainer } from "./shadow-host.js";
+import { getOrCreateContainer, getShadowRoot } from "./shadow-host.js";
 import { showPopover, showPopoverOnHover } from "./popover.js";
 
 const elementContainerMap = new WeakMap<HTMLElement, string>();
