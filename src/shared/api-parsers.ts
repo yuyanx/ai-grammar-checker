@@ -81,6 +81,10 @@ export function validateErrors(
       offset >= 0 &&
       originalText.substring(offset, offset + length) === err.original
     ) {
+      // Skip if the suggestion is already applied at this position
+      if (originalText.substring(offset, offset + err.suggestion.length) === err.suggestion) {
+        continue;
+      }
       const key = `${offset}:${length}`;
       if (!usedOffsets.has(key)) {
         usedOffsets.add(key);
@@ -102,6 +106,11 @@ export function validateErrors(
     while (!found) {
       const foundIndex = originalText.indexOf(err.original, searchFrom);
       if (foundIndex < 0) break;
+      // Skip if the suggestion is already applied at this position
+      if (originalText.substring(foundIndex, foundIndex + err.suggestion.length) === err.suggestion) {
+        searchFrom = foundIndex + 1;
+        continue;
+      }
       const key = `${foundIndex}:${length}`;
       if (!usedOffsets.has(key)) {
         usedOffsets.add(key);
