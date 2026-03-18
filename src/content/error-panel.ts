@@ -83,8 +83,16 @@ export function showErrorPanel(
 
   for (const error of visibleErrors) {
     const item = createErrorItem(error, element, dark, (fixedError) => {
-      // Individual fix
+      // Individual fix — adjust remaining errors' offsets to account for text length change
+      const delta = fixedError.suggestion.length - fixedError.original.length;
       remainingErrors = remainingErrors.filter((e) => e !== fixedError);
+      for (const err of remainingErrors) {
+        if (err.offset > fixedError.offset) {
+          err.offset += delta;
+        }
+      }
+      // Also update correctedText to remove the applied fix so Fix All still works
+      correctedText = undefined;
       updateTitle(title, remainingErrors.length);
       if (remainingErrors.length === 0) {
         showSuccessState(list, success, fixAllBtn);
