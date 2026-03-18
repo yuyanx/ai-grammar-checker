@@ -32,8 +32,9 @@ Example: for input "i cant beleive its wendsday"
 ]}
 
 Rules:
-- text.substring(offset, offset + length) must exactly equal "original".
+- text.substring(offset, offset + length) must exactly equal "original". The "original" field MUST be an exact substring of the input — never report text that does not appear in the input.
 - Only fix genuine errors. Do not alter meaning, tone, or style.
+- Do NOT hallucinate errors. If a character appears once, do not claim it appears twice.
 - If no errors, return {"correctedText": "<the original text unchanged>", "errors": []}.
 - Output ONLY the JSON object, nothing else.`;
 
