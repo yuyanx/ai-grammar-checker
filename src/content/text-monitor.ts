@@ -79,6 +79,24 @@ export async function startMonitoring(): Promise<void> {
     attributeFilter: ["contenteditable", "role"],
   });
 
+  // Catch text fields on focus — most reliable method for dynamically created editors
+  // (e.g. LinkedIn's Quill editor, Medium, Notion). When the user clicks into a field,
+  // we check if it's a text input we should attach to.
+  document.addEventListener("focusin", (e) => {
+    if (!enabled) return;
+    const target = e.target;
+    if (!(target instanceof HTMLElement)) return;
+
+    // Check the focused element itself, or walk up to find a contenteditable ancestor
+    const el = target.closest<HTMLElement>(TEXT_INPUT_SELECTORS) || (target.isContentEditable ? target : null);
+    if (el && !elementStates.has(el)) {
+      if (!shouldSkipElement(el)) {
+        attachListeners(el);
+        trackedElements.add(el);
+      }
+    }
+  }, true);
+
   // Recalculate underline positions on scroll/resize
   let rafId: number | null = null;
   const recalculate = () => {
@@ -147,7 +165,7 @@ export async function startMonitoring(): Promise<void> {
   });
 }
 
-const TEXT_INPUT_SELECTORS = "textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only']";
+const TEXT_INPUT_SELECTORS = "textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only'], [role='textbox'][contenteditable]";
 
 function scanForElements(root: HTMLElement): void {
   const elements: HTMLElement[] = root.matches?.(TEXT_INPUT_SELECTORS) ? [root] : [];
