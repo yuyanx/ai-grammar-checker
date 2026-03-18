@@ -1,14 +1,16 @@
 import { GrammarError, CheckRequest, CheckResponse, ElementState } from "../shared/types.js";
 import { getSettings, isConfigured } from "../shared/storage.js";
-import { renderErrors, clearErrors, errorKey } from "./underline-renderer.js";
-import { updateWidget, removeWidget } from "./status-widget.js";
+import { renderErrors, clearErrors, clearAllErrors, errorKey } from "./underline-renderer.js";
+import { updateWidget, removeWidget, removeAllWidgets } from "./status-widget.js";
 import { showPopover } from "./popover.js";
 import { showErrorPanel, hideErrorPanel } from "./error-panel.js";
 
 const elementStates = new WeakMap<HTMLElement, ElementState>();
+const trackedElements = new Set<HTMLElement>();
 let debounceMs = 800;
 let enabled = true;
 let configuredCache: boolean | null = null;
+let lastUrl = location.href;
 
 // Track recently applied fixes to prevent oscillation (suggestion reverting back to original)
 // Maps element → Set of "suggestion→original" pairs that should be suppressed
@@ -80,6 +82,42 @@ export async function startMonitoring(): Promise<void> {
   window.addEventListener("scroll", recalculate, true);
   window.addEventListener("resize", recalculate);
 
+  // Periodically clean up disconnected elements (handles SPA navigation)
+  setInterval(() => {
+    // Detect URL change (SPA navigation) — nuclear cleanup
+    if (location.href !== lastUrl) {
+      lastUrl = location.href;
+      clearAllErrors();
+      removeAllWidgets();
+      for (const el of trackedElements) {
+        const state = elementStates.get(el);
+        if (state) {
+          state.errors = [];
+          state.lastText = "";
+          if (state.debounceTimer !== null) {
+            clearTimeout(state.debounceTimer);
+            state.debounceTimer = null;
+          }
+        }
+        if (!el.isConnected) {
+          trackedElements.delete(el);
+        }
+      }
+      // Re-scan for new elements after SPA navigation
+      setTimeout(() => scanForElements(document.body), 200);
+      return;
+    }
+
+    // Clean up elements that were removed from DOM
+    for (const el of trackedElements) {
+      if (!el.isConnected) {
+        clearErrors(el);
+        removeWidget(el);
+        trackedElements.delete(el);
+      }
+    }
+  }, 1000);
+
   // Listen for settings changes
   chrome.storage.onChanged.addListener((changes) => {
     if (changes.settings) {
@@ -109,6 +147,7 @@ function scanForElements(root: HTMLElement): void {
       // Privacy check: skip sensitive fields
       if (shouldSkipElement(el)) continue;
       attachListeners(el);
+      trackedElements.add(el);
     }
   }
 }

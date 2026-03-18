@@ -1,4 +1,4 @@
-import { getOrCreateContainer } from "./shadow-host.js";
+import { getOrCreateContainer, getShadowRoot } from "./shadow-host.js";
 import { isDarkMode } from "./dark-mode.js";
 
 export type WidgetState = "idle" | "checking" | "errors" | "clean";
@@ -90,6 +90,16 @@ export function removeWidget(element: HTMLElement): void {
     const container = getOrCreateContainer(containerId);
     container.innerHTML = "";
   }
+}
+
+/**
+ * Nuclear clear: remove all widget containers from the shadow DOM.
+ * Used when element-specific clear isn't working (e.g., SPA navigation).
+ */
+export function removeAllWidgets(): void {
+  const root = getShadowRoot();
+  const containers = root.querySelectorAll("[id^='widget-']");
+  containers.forEach((c) => { c.innerHTML = ""; });
 }
 
 function getWidgetContainerId(element: HTMLElement): string {
