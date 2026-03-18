@@ -7,10 +7,12 @@ import { showErrorPanel, hideErrorPanel } from "./error-panel.js";
 
 const elementStates = new WeakMap<HTMLElement, ElementState>();
 const trackedElements = new Set<HTMLElement>();
+const elementSourceIds = new WeakMap<HTMLElement, string>();
 let debounceMs = 800;
 let enabled = true;
 let configuredCache: boolean | null = null;
 let lastUrl = location.href;
+let sourceCounter = 0;
 
 // Track recently applied fixes to prevent oscillation (suggestion reverting back to original)
 // Maps element → Set of "suggestion→original" pairs that should be suppressed
@@ -210,11 +212,8 @@ export async function startMonitoring(): Promise<void> {
         if (state) {
           state.errors = [];
           state.lastText = "";
-          if (state.debounceTimer !== null) {
-            clearTimeout(state.debounceTimer);
-            state.debounceTimer = null;
-          }
         }
+        cleanupElementState(el);
         if (!el.isConnected) {
           trackedElements.delete(el);
         }
@@ -229,6 +228,7 @@ export async function startMonitoring(): Promise<void> {
       if (!el.isConnected) {
         clearErrors(el);
         removeWidget(el);
+        cleanupElementState(el);
         trackedElements.delete(el);
       }
     }
@@ -309,11 +309,14 @@ function shouldSkipElement(element: HTMLElement): boolean {
 }
 
 function attachListeners(element: HTMLElement): void {
+  const sourceId = getSourceId(element);
   const state: ElementState = {
     lastText: "",
     errors: [],
     ignoredErrors: new Set(),
     debounceTimer: null,
+    sourceId,
+    observers: [],
   };
   elementStates.set(element, state);
 
@@ -379,6 +382,7 @@ function attachListeners(element: HTMLElement): void {
       }
     });
     observer.observe(element, { childList: true, subtree: true, characterData: true });
+    state.observers.push(observer);
   }
 
   // For role="textbox" elements that are NOT contenteditable (custom editors),
@@ -396,6 +400,7 @@ function attachListeners(element: HTMLElement): void {
       }
     });
     observer.observe(element, { childList: true, subtree: true, characterData: true });
+    state.observers.push(observer);
   }
 }
 
@@ -439,6 +444,7 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
       type: "CHECK_GRAMMAR",
       text,
       requestId,
+      sourceId: state.sourceId,
     };
 
     const response: CheckResponse = await chrome.runtime.sendMessage(request);
@@ -490,6 +496,30 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
     console.warn("[AI Grammar Checker] Error:", err);
     updateWidget(element, "idle");
   }
+}
+
+function getSourceId(element: HTMLElement): string {
+  let sourceId = elementSourceIds.get(element);
+  if (!sourceId) {
+    sourceId = `editor-${sourceCounter++}`;
+    elementSourceIds.set(element, sourceId);
+  }
+  return sourceId;
+}
+
+function cleanupElementState(element: HTMLElement): void {
+  const state = elementStates.get(element);
+  if (!state) return;
+
+  if (state.debounceTimer !== null) {
+    clearTimeout(state.debounceTimer);
+    state.debounceTimer = null;
+  }
+
+  for (const observer of state.observers) {
+    observer.disconnect();
+  }
+  state.observers = [];
 }
 
 function openErrorPanelForElement(element: HTMLElement): void {

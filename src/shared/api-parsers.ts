@@ -68,13 +68,31 @@ export function validateErrors(
       continue;
     }
 
-    // Handle missing-punctuation insertion errors (empty original)
-    if (!err.original || err.original === err.suggestion) {
+    if (typeof err.original !== "string" || err.original === err.suggestion) {
       continue;
     }
 
     let offset = typeof err.offset === "number" ? err.offset : -1;
     const length = err.original.length;
+
+    if (length === 0) {
+      const insertionOffset = resolveInsertionOffset(err, originalText);
+      if (insertionOffset < 0) continue;
+
+      const key = `${insertionOffset}:0:${err.suggestion}`;
+      if (!usedOffsets.has(key)) {
+        usedOffsets.add(key);
+        validated.push({
+          original: "",
+          suggestion: err.suggestion,
+          offset: insertionOffset,
+          length: 0,
+          type: err.type,
+          explanation: err.explanation || "",
+        });
+      }
+      continue;
+    }
 
     // Verify the offset matches
     if (
@@ -139,4 +157,24 @@ export function validateErrors(
   }
 
   return validated;
+}
+
+function resolveInsertionOffset(err: any, originalText: string): number {
+  if (typeof err.offset === "number" && err.offset >= 0 && err.offset <= originalText.length) {
+    return err.offset;
+  }
+
+  if (typeof err.suggestion !== "string" || !err.suggestion) {
+    return -1;
+  }
+
+  const firstChar = err.suggestion[0];
+  if (!firstChar) return -1;
+
+  const matchIndex = originalText.indexOf(firstChar);
+  if (matchIndex > 0) {
+    return matchIndex;
+  }
+
+  return originalText.length;
 }

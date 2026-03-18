@@ -2,7 +2,7 @@ import { CheckRequest, CheckResponse, GrammarError } from "../shared/types.js";
 import { getSettings } from "../shared/storage.js";
 import { buildGrammarCheckPrompt } from "../shared/prompts.js";
 import { parseOpenAIResponse, parseGeminiResponse, validateErrors, ParsedResponse } from "../shared/api-parsers.js";
-import { OPENAI_API_URL, GEMINI_API_URL, DEFAULT_OPENAI_MODEL, MAX_TEXT_LENGTH } from "../shared/constants.js";
+import { OPENAI_API_URL, GEMINI_API_URL, DEFAULT_OPENAI_MODEL, MAX_TEXT_LENGTH, PROMPT_CACHE_VERSION } from "../shared/constants.js";
 
 // Rate limit state lives here in the service worker — persists across all tabs/page loads
 let rateLimitedUntil = 0;
@@ -34,22 +34,24 @@ const responseCache = new Map<string, { errors: GrammarError[]; correctedText?: 
 const CACHE_TTL = 60_000; // 1 minute
 const CACHE_MAX = 50;
 
-function getCached(text: string): { errors: GrammarError[]; correctedText?: string } | null {
-  const entry = responseCache.get(text);
+function getCached(cacheKey: string): { errors: GrammarError[]; correctedText?: string } | null {
+  const entry = responseCache.get(cacheKey);
   if (!entry) return null;
   if (Date.now() - entry.timestamp > CACHE_TTL) {
-    responseCache.delete(text);
+    responseCache.delete(cacheKey);
     return null;
   }
+  responseCache.delete(cacheKey);
+  responseCache.set(cacheKey, entry);
   return { errors: entry.errors, correctedText: entry.correctedText };
 }
 
-function setCache(text: string, errors: GrammarError[], correctedText?: string): void {
+function setCache(cacheKey: string, errors: GrammarError[], correctedText?: string): void {
   if (responseCache.size >= CACHE_MAX) {
     const oldest = responseCache.keys().next().value!;
     responseCache.delete(oldest);
   }
-  responseCache.set(text, { errors, correctedText, timestamp: Date.now() });
+  responseCache.set(cacheKey, { errors, correctedText, timestamp: Date.now() });
 }
 
 // Track in-flight requests so we can abort superseded ones
@@ -71,7 +73,7 @@ chrome.runtime.onMessage.addListener(
         return true;
       }
 
-      handleCheckGrammar(message)
+      handleCheckGrammar(message, sender)
         .then(sendResponse)
         .catch((err) => {
           const msg = err instanceof Error ? err.message : "Unknown error";
@@ -98,13 +100,15 @@ chrome.runtime.onMessage.addListener(
 );
 
 async function handleCheckGrammar(
-  request: CheckRequest
+  request: CheckRequest,
+  sender: chrome.runtime.MessageSender
 ): Promise<CheckResponse> {
   const settings = await getCachedSettings();
   const text = request.text.substring(0, MAX_TEXT_LENGTH);
+  const cacheKey = buildCacheKey(text, settings);
 
   // Check cache first
-  const cached = getCached(text);
+  const cached = getCached(cacheKey);
   if (cached) {
     let errors = [...cached.errors];
     if (!settings.checkGrammar) errors = errors.filter((e) => e.type !== "grammar");
@@ -114,36 +118,42 @@ async function handleCheckGrammar(
   }
 
   // Abort any previous in-flight request from the same tab
-  const tabKey = request.requestId.split("-")[0]; // group by timestamp prefix
-  const prevAbort = inflightAborts.get("global");
+  const requestScope = getRequestScope(request, sender);
+  const prevAbort = inflightAborts.get(requestScope);
   if (prevAbort) prevAbort.abort();
   const abortController = new AbortController();
-  inflightAborts.set("global", abortController);
+  inflightAborts.set(requestScope, abortController);
 
   const { system, user } = buildGrammarCheckPrompt(text);
 
   let parsed: ParsedResponse;
 
-  if (settings.provider === "openai") {
-    if (!settings.openaiApiKey) {
-      return {
-        type: "CHECK_GRAMMAR_RESULT",
-        requestId: request.requestId,
-        errors: [],
-        error: "OpenAI API key not configured",
-      };
+  try {
+    if (settings.provider === "openai") {
+      if (!settings.openaiApiKey) {
+        return {
+          type: "CHECK_GRAMMAR_RESULT",
+          requestId: request.requestId,
+          errors: [],
+          error: "OpenAI API key not configured",
+        };
+      }
+      parsed = await callOpenAI(system, user, settings.openaiApiKey, abortController.signal);
+    } else {
+      if (!settings.geminiApiKey) {
+        return {
+          type: "CHECK_GRAMMAR_RESULT",
+          requestId: request.requestId,
+          errors: [],
+          error: "Gemini API key not configured",
+        };
+      }
+      parsed = await callGemini(system, user, settings.geminiApiKey, abortController.signal);
     }
-    parsed = await callOpenAI(system, user, settings.openaiApiKey, abortController.signal);
-  } else {
-    if (!settings.geminiApiKey) {
-      return {
-        type: "CHECK_GRAMMAR_RESULT",
-        requestId: request.requestId,
-        errors: [],
-        error: "Gemini API key not configured",
-      };
+  } finally {
+    if (inflightAborts.get(requestScope) === abortController) {
+      inflightAborts.delete(requestScope);
     }
-    parsed = await callGemini(system, user, settings.geminiApiKey, abortController.signal);
   }
 
   console.log("[AI Grammar Checker] Raw errors from API:", JSON.stringify(parsed.errors));
@@ -153,7 +163,7 @@ async function handleCheckGrammar(
   console.log("[AI Grammar Checker] Validated errors:", errors.length, JSON.stringify(errors));
 
   // Cache the unfiltered result
-  setCache(text, errors, parsed.correctedText);
+  setCache(cacheKey, errors, parsed.correctedText);
 
   // Filter by user preferences
   if (!settings.checkGrammar) errors = errors.filter((e) => e.type !== "grammar");
@@ -166,6 +176,31 @@ async function handleCheckGrammar(
     errors,
     correctedText: parsed.correctedText,
   };
+}
+
+function getRequestScope(
+  request: CheckRequest,
+  sender: chrome.runtime.MessageSender
+): string {
+  const tabId = sender.tab?.id ?? "no-tab";
+  const frameId = sender.frameId ?? 0;
+  const sourceId = request.sourceId ?? request.requestId;
+  return `${tabId}:${frameId}:${sourceId}`;
+}
+
+function buildCacheKey(
+  text: string,
+  settings: Awaited<ReturnType<typeof getSettings>>
+): string {
+  return JSON.stringify({
+    text,
+    provider: settings.provider,
+    openaiModel: settings.provider === "openai" ? DEFAULT_OPENAI_MODEL : undefined,
+    grammar: settings.checkGrammar,
+    spelling: settings.checkSpelling,
+    punctuation: settings.checkPunctuation,
+    promptVersion: PROMPT_CACHE_VERSION,
+  });
 }
 
 async function callOpenAI(

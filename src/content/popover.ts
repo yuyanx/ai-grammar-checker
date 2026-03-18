@@ -265,7 +265,11 @@ export function applyFix(
 
     // Use error.offset first, fall back to indexOf
     let idx = error.offset;
-    if (idx < 0 || value.substring(idx, idx + error.original.length) !== error.original) {
+    if (error.length === 0) {
+      if (idx < 0 || idx > value.length) {
+        idx = value.length;
+      }
+    } else if (idx < 0 || value.substring(idx, idx + error.original.length) !== error.original) {
       idx = value.indexOf(error.original);
     }
     if (idx === -1) return;
@@ -310,7 +314,7 @@ export function applyFix(
         const textAfter = element.innerText;
         if (textAfter === textBefore) {
           console.log("[AI Grammar Checker] execCommand failed, using DOM fallback");
-          directDomReplace(element, error.original, error.suggestion);
+          directDomReplace(element, error.original, error.suggestion, error.offset);
         }
       }, 100);
     }
@@ -333,7 +337,7 @@ function setContentEditableSelection(
     full += n.textContent || "";
   }
 
-  const idx = full.indexOf(error.original);
+  const idx = error.length === 0 ? error.offset : full.indexOf(error.original);
   if (idx === -1) return false;
 
   let startNode: Text | null = null,
@@ -373,7 +377,7 @@ function setContentEditableSelection(
  * Walks text nodes, finds the error text, and replaces it.
  * Dispatches InputEvent to notify rich-text editors (Quill, etc.) of the change.
  */
-function directDomReplace(element: HTMLElement, original: string, replacement: string): void {
+function directDomReplace(element: HTMLElement, original: string, replacement: string, offset: number = -1): void {
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
   let accumulated = "";
   const nodes: { node: Text; start: number }[] = [];
@@ -384,8 +388,32 @@ function directDomReplace(element: HTMLElement, original: string, replacement: s
     accumulated += n.textContent || "";
   }
 
-  const idx = accumulated.indexOf(original);
+  const idx = original.length === 0
+    ? (offset >= 0 ? Math.min(offset, accumulated.length) : accumulated.length)
+    : accumulated.indexOf(original);
   if (idx === -1) return;
+
+  if (original.length === 0) {
+    const range = document.createRange();
+    const selection = window.getSelection();
+    for (const entry of nodes) {
+      const nodeText = entry.node.textContent || "";
+      const nodeEnd = entry.start + nodeText.length;
+      if (nodeEnd < idx) continue;
+      range.setStart(entry.node, Math.max(0, idx - entry.start));
+      range.collapse(true);
+      const textNode = document.createTextNode(replacement);
+      range.insertNode(textNode);
+      selection?.removeAllRanges();
+      selection?.collapse(textNode, replacement.length);
+      element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: replacement }));
+      return;
+    }
+
+    element.appendChild(document.createTextNode(replacement));
+    element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: replacement }));
+    return;
+  }
 
   // Find the start and end text nodes
   for (const entry of nodes) {
