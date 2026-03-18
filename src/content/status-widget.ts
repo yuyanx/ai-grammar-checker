@@ -23,7 +23,7 @@ export function updateWidget(
 
   // Don't show widget for hidden/invisible elements
   const rect = element.getBoundingClientRect();
-  if (rect.width < 60 || rect.height < 30) return;
+  if (rect.width < 50 || rect.height < 20) return;
 
   // Don't show for idle state
   if (state === "idle") return;
@@ -31,14 +31,18 @@ export function updateWidget(
   const widget = document.createElement("div");
   const dark = isDarkMode();
 
-  // Position: bottom-right corner of the text field
-  const margin = 6;
-  widget.style.position = "fixed";
-  widget.style.top = `${rect.bottom - 28 - margin}px`;
-  widget.style.left = `${rect.right - 28 - margin}px`;
+  // Use smaller widget for compact editors (e.g. comment boxes)
+  const isCompact = rect.height < 44;
+  const size = isCompact ? 22 : 28;
+  const margin = isCompact ? 3 : 6;
 
-  // Ensure widget stays within the element bounds
-  if (rect.bottom - 28 - margin < rect.top + 4) return;
+  // Position: bottom-right corner of the text field
+  widget.style.position = "fixed";
+  widget.style.top = `${rect.bottom - size - margin}px`;
+  widget.style.left = `${rect.right - size - margin}px`;
+  if (isCompact) {
+    widget.classList.add("grammar-widget--compact");
+  }
 
   if (state === "checking") {
     widget.className = "grammar-widget grammar-widget--checking";

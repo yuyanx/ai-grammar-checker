@@ -546,14 +546,15 @@ function renderErrorsForElement(element: HTMLElement): void {
     state.errors,
     state.ignoredErrors,
     () => {
-      // On accept: clear all underlines immediately, then re-check after a delay
+      // On accept (hover tooltip fix): clear all underlines immediately, then re-check.
+      // Don't auto-show the Fix All panel — only the panel's own accept should do that.
       const s = elementStates.get(element);
       if (s) {
         s.errors = [];
         s.lastText = ""; // Force re-check
         clearErrors(element);
         updateWidget(element, "idle");
-        setTimeout(() => checkElement(element, true), 300);
+        setTimeout(() => checkElement(element, false), 300);
       }
     },
     (key: string) => {

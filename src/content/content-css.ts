@@ -296,6 +296,23 @@ export const CONTENT_CSS = `
     animation: grammar-checkmark-in 0.3s ease-out;
   }
 
+  /* Compact widget for small editors (comment boxes) */
+  .grammar-widget.grammar-widget--compact {
+    width: 22px;
+    height: 22px;
+    border-width: 1.5px;
+  }
+  .grammar-widget--compact .grammar-widget__count {
+    font-size: 9px;
+  }
+  .grammar-widget--compact .grammar-widget__check {
+    font-size: 10px;
+  }
+  .grammar-widget--compact .grammar-widget__spinner {
+    width: 10px;
+    height: 10px;
+  }
+
   /* Widget tooltip on hover */
   .grammar-widget__tooltip {
     position: absolute;
