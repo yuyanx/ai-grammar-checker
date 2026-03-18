@@ -1,0 +1,129 @@
+# Changelog
+
+## v1.6.5
+
+### Bug Fixes
+- Detect visible action labels like Instagram Post explicitly and anchor compact dots to the left of that label with a hard safety gap instead of relying only on generic obstacle scanning
+
+## v1.6.4
+
+### Bug Fixes
+- Enforce a hard safety gap before compact editor action labels like Instagram Post and shrink the red dot again so it cannot be placed inside the action area
+
+## v1.6.3
+
+### Bug Fixes
+- Stop dropping rendered right-side action text from compact badge obstacle detection when Instagram wraps the editor and Post label in the same container
+
+## v1.6.2
+
+### Bug Fixes
+- Position compact badges from the rendered text line inside contenteditable editors instead of the full editable box so Instagram comment dots stop being pushed on top of Post
+
+## v1.6.1
+
+### Bug Fixes
+- Treat rendered inline text like Post as occupied space when placing compact badges so the dot no longer lands on top of visible action labels
+
+## v1.6.0
+
+### Improvements
+- Change compact error badges to a tiny Grammarly-style red dot so crowded editors like Instagram comments can place the badge without the larger numbered chip covering nearby controls
+
+## v1.5.17
+
+### Bug Fixes
+- Detect the visible inline action cluster by rendered hit scanning across the editor row so compact badges can align before Instagram's Post-plus-emoji area
+
+## v1.5.16
+
+### Bug Fixes
+- Pin compact badges directly before the inline action block on the editor row so Instagram comment badges align like Grammarly's dot before Post
+
+## v1.5.15
+
+### Bug Fixes
+- Use rendered hit-testing for compact badge placement so the badge chooses actual free space in the editor row instead of overlapping Instagram's visible Post and emoji area
+
+## v1.5.14
+
+### Bug Fixes
+- Reserve the entire visible right-side action area in compact editors so badges sit left of Post and emoji content instead of relying on brittle control detection
+
+## v1.5.13
+
+### Bug Fixes
+- Align compact editor badges against the full right-side action cluster so the badge sits before Post-plus-emoji groups instead of overlapping them
+
+## v1.5.12
+
+### Bug Fixes
+- Place compact editor badges in the gap before right-side controls so the badge no longer overlaps buttons like Post, emoji, or Comment
+
+## v1.5.11
+
+### Bug Fixes
+- Make compact editor badge placement collision-aware so the badge avoids overlapping existing controls like Post, emoji, and comment buttons
+
+## v1.5.10
+
+### Bug Fixes
+- Rework compact editor badge anchoring so the badge pins to the editor container's bottom-right corner and repositions on layout changes such as zoom or resize
+
+## v1.5.9
+
+### Bug Fixes
+- Refine compact editor badge placement so Instagram comments keep the badge closer to the typed text and away from the right-side action controls
+
+## v1.5.8
+
+### Bug Fixes
+- Fix compact editor badges not rendering when the editable element is narrow but the surrounding composer row is visible, such as Instagram comments
+
+## v1.5.7
+
+### Bug Fixes
+- Fix compact editor badge anchoring so Instagram comment rows position the badge against the full composer instead of the narrow text box
+
+## v1.5.6
+
+### Bug Fixes
+- Fix compact editor badge placement so comment boxes like Instagram can still show the error badge and open Fix All
+
+## v1.5.5
+
+### Bug Fixes
+- Fix contenteditable offset mapping so repeated words use the correct occurrence when accepting fixes
+- Fix multiline rich-text editors drifting after block or line-break boundaries when drawing underlines or applying fixes
+- Fix unchanged text getting stuck after transient API failures by allowing retries without extra typing
+
+## v1.1.0
+
+### Bug Fixes
+- Fix Gemini 2.5 Flash "thinking" parts breaking response parsing, causing only 1 error to show
+- Fix model only returning 1 error at a time (improved prompt with few-shot example)
+- Fix apply-fix inserting text at wrong position
+- Fix underlines persisting after clicking Accept
+- Fix double text replacement and underlines persisting after accept
+- Fix Accept button not working (delegated execCommand to MAIN world via postMessage)
+- Fix quota loop by moving rate limit tracking to service worker
+
+### Performance
+- Speed up grammar checking for paid tier users (reduced debounce, parallel requests)
+- Add request caching, abort in-flight requests, and reduced debounce delay
+- Switch to gemini-2.5-flash-lite (15 RPM, best free tier throughput)
+- Raise minimum text length to 30 chars to conserve free tier daily quota
+
+### Improvements
+- Add input[type=search] and contenteditable variants to element selectors
+
+## v1.0.0
+
+### Initial Release
+- Grammar, spelling, and punctuation checking powered by OpenAI or Gemini API keys
+- Real-time error detection with inline underlines
+- Error popover with suggestions and one-click accept
+- Support for text inputs, textareas, and contenteditable elements
+- Configurable API provider (OpenAI / Gemini) with bring-your-own-key
+- Options page for API key management and settings
+- Chrome Extension Manifest V3

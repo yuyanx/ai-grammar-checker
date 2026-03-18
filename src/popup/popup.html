@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="popup.css">
+  <title>AI Grammar Checker</title>
+</head>
+<body>
+  <div class="popup">
+    <div class="popup__header">
+      <h1 class="popup__title">AI Grammar Checker</h1>
+    </div>
+
+    <div class="popup__status" id="status">
+      <span class="popup__status-dot" id="statusDot"></span>
+      <span id="statusText">Checking...</span>
+    </div>
+
+    <div class="popup__toggle">
+      <label class="toggle">
+        <input type="checkbox" id="enableToggle" checked>
+        <span class="toggle__slider"></span>
+      </label>
+      <span class="toggle__label">Enable checking</span>
+    </div>
+
+    <div class="popup__info" id="errorCount"></div>
+
+    <button class="popup__settings-btn" id="settingsBtn">Settings</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
