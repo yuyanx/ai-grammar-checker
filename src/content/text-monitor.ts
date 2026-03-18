@@ -116,6 +116,13 @@ function attachListeners(element: HTMLElement): void {
     const currentState = elementStates.get(element);
     if (!currentState) return;
 
+    // Immediately clear stale underlines and badge when text changes
+    if (currentState.errors.length > 0) {
+      currentState.errors = [];
+      clearErrors(element);
+      updateWidget(element, "idle");
+    }
+
     if (currentState.debounceTimer !== null) {
       clearTimeout(currentState.debounceTimer);
     }
@@ -128,7 +135,7 @@ function attachListeners(element: HTMLElement): void {
   element.addEventListener("input", handler);
 }
 
-async function checkElement(element: HTMLElement): Promise<void> {
+async function checkElement(element: HTMLElement, autoShowPanel = false): Promise<void> {
   if (configuredCache === null) configuredCache = await isConfigured();
   if (!configuredCache) return;
 
@@ -142,8 +149,19 @@ async function checkElement(element: HTMLElement): Promise<void> {
     text = element.innerText;
   }
 
-  // Skip empty, too short, or unchanged text
-  if (!text.trim() || text.trim().length < 10 || text === state.lastText) return;
+  // If text is empty or too short, clear existing errors and return
+  if (!text.trim() || text.trim().length < 10) {
+    if (state.errors.length > 0) {
+      state.errors = [];
+      state.lastText = "";
+      clearErrors(element);
+      updateWidget(element, "idle");
+    }
+    return;
+  }
+
+  // Skip unchanged text
+  if (text === state.lastText) return;
 
   state.lastText = text;
 
@@ -186,50 +204,13 @@ async function checkElement(element: HTMLElement): Promise<void> {
 
     if (visibleErrors.length > 0) {
       updateWidget(element, "errors", visibleErrors.length, () => {
-        // Click widget → show error panel listing all errors
-        const currentState = elementStates.get(element);
-        if (!currentState) return;
-
-        const currentVisible = currentState.errors.filter(
-          (e) => !currentState.ignoredErrors.has(errorKey(e))
-        );
-        if (currentVisible.length === 0) return;
-
-        showErrorPanel(
-          element,
-          currentVisible,
-          currentState.ignoredErrors,
-          element.getBoundingClientRect(),
-          currentState.correctedText,
-          () => {
-            // onAccept: clear errors and re-check
-            const s = elementStates.get(element);
-            if (s) {
-              s.errors = [];
-              s.lastText = "";
-              clearErrors(element);
-              updateWidget(element, "idle");
-              setTimeout(() => checkElement(element), 300);
-            }
-          },
-          (key: string) => {
-            // onDismiss: add to ignored set and update
-            const s = elementStates.get(element);
-            if (s) {
-              s.ignoredErrors.add(key);
-              renderErrorsForElement(element);
-              const remaining = s.errors.filter(
-                (e) => !s.ignoredErrors.has(errorKey(e))
-              );
-              if (remaining.length > 0) {
-                updateWidget(element, "errors", remaining.length);
-              } else {
-                updateWidget(element, "clean");
-              }
-            }
-          }
-        );
+        openErrorPanelForElement(element);
       });
+
+      // Auto-show panel after a post-fix re-check finds new errors
+      if (autoShowPanel) {
+        openErrorPanelForElement(element);
+      }
     } else {
       updateWidget(element, "clean");
     }
@@ -240,6 +221,51 @@ async function checkElement(element: HTMLElement): Promise<void> {
     console.warn("[AI Grammar Checker] Error:", err);
     updateWidget(element, "idle");
   }
+}
+
+function openErrorPanelForElement(element: HTMLElement): void {
+  const currentState = elementStates.get(element);
+  if (!currentState) return;
+
+  const currentVisible = currentState.errors.filter(
+    (e) => !currentState.ignoredErrors.has(errorKey(e))
+  );
+  if (currentVisible.length === 0) return;
+
+  showErrorPanel(
+    element,
+    currentVisible,
+    currentState.ignoredErrors,
+    element.getBoundingClientRect(),
+    currentState.correctedText,
+    () => {
+      // onAccept: clear errors and re-check
+      const s = elementStates.get(element);
+      if (s) {
+        s.errors = [];
+        s.lastText = "";
+        clearErrors(element);
+        updateWidget(element, "idle");
+        setTimeout(() => checkElement(element, true), 300);
+      }
+    },
+    (key: string) => {
+      // onDismiss: add to ignored set and update
+      const s = elementStates.get(element);
+      if (s) {
+        s.ignoredErrors.add(key);
+        renderErrorsForElement(element);
+        const remaining = s.errors.filter(
+          (e) => !s.ignoredErrors.has(errorKey(e))
+        );
+        if (remaining.length > 0) {
+          updateWidget(element, "errors", remaining.length);
+        } else {
+          updateWidget(element, "clean");
+        }
+      }
+    }
+  );
 }
 
 function renderErrorsForElement(element: HTMLElement): void {
@@ -258,7 +284,7 @@ function renderErrorsForElement(element: HTMLElement): void {
         s.lastText = ""; // Force re-check
         clearErrors(element);
         updateWidget(element, "idle");
-        setTimeout(() => checkElement(element), 300);
+        setTimeout(() => checkElement(element, true), 300);
       }
     },
     (key: string) => {
