@@ -280,10 +280,54 @@ function applyAllFixes(
       const sel = window.getSelection();
       if (sel) {
         sel.selectAllChildren(element);
-        window.postMessage(
-          { type: "AI_GRAMMAR_APPLY_FIX", suggestion: correctedText },
-          "*"
-        );
+
+        // Try execCommand directly first
+        let inserted = false;
+        try {
+          inserted = document.execCommand("insertText", false, correctedText);
+        } catch {
+          inserted = false;
+        }
+
+        if (!inserted) {
+          // Try via MAIN world page-script
+          window.postMessage(
+            { type: "AI_GRAMMAR_APPLY_FIX", suggestion: correctedText },
+            "*"
+          );
+        }
+
+        // Verify and fallback to direct DOM replacement
+        setTimeout(() => {
+          // Check if any of the original errors still exist in text
+          const currentText = element.innerText;
+          const anyRemaining = errors.some(e => currentText.includes(e.original));
+          if (anyRemaining) {
+            console.log("[AI Grammar Checker] Fix All: execCommand failed, using DOM fallback");
+            // Direct replacement: set innerHTML to corrected text preserving structure
+            // Walk text nodes and build corrected version
+            let fullText = element.innerText;
+            const sorted = [...errors].sort((a, b) => b.offset - a.offset);
+            for (const err of sorted) {
+              const idx = fullText.indexOf(err.original);
+              if (idx !== -1) {
+                fullText = fullText.substring(0, idx) + err.suggestion + fullText.substring(idx + err.original.length);
+              }
+            }
+            // For Quill editors, setting innerText inside <p> tags works
+            const firstChild = element.querySelector("p");
+            if (firstChild) {
+              firstChild.textContent = fullText;
+            } else {
+              element.textContent = fullText;
+            }
+            element.dispatchEvent(new InputEvent("input", {
+              bubbles: true,
+              inputType: "insertText",
+              data: fullText,
+            }));
+          }
+        }, 150);
       }
     } else {
       // Fallback: apply fixes one by one in reverse offset order with small delays

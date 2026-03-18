@@ -287,11 +287,30 @@ export function applyFix(
   } else if (element.isContentEditable) {
     const selectionSet = setContentEditableSelection(element, error);
     if (selectionSet) {
-      // Delegate execCommand to MAIN world where it works for contentEditable
-      window.postMessage(
-        { type: "AI_GRAMMAR_APPLY_FIX", suggestion: error.suggestion },
-        "*"
-      );
+      // Try execCommand directly first (works in isolated world for most editors)
+      let inserted = false;
+      try {
+        inserted = document.execCommand("insertText", false, error.suggestion);
+      } catch {
+        inserted = false;
+      }
+
+      if (!inserted) {
+        // Fallback: try via MAIN world page-script
+        window.postMessage(
+          { type: "AI_GRAMMAR_APPLY_FIX", suggestion: error.suggestion },
+          "*"
+        );
+      }
+
+      // Verify the fix applied. If not, use direct DOM manipulation as final fallback.
+      setTimeout(() => {
+        const currentText = element.innerText;
+        if (currentText.includes(error.original)) {
+          console.log("[AI Grammar Checker] execCommand failed, using DOM fallback");
+          directDomReplace(element, error.original, error.suggestion);
+        }
+      }, 100);
     }
   }
 }
@@ -345,6 +364,71 @@ function setContentEditableSelection(
     }
   }
   return false;
+}
+
+/**
+ * Direct DOM manipulation fallback for contenteditable elements.
+ * Walks text nodes, finds the error text, and replaces it.
+ * Dispatches InputEvent to notify rich-text editors (Quill, etc.) of the change.
+ */
+function directDomReplace(element: HTMLElement, original: string, replacement: string): void {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  let accumulated = "";
+  const nodes: { node: Text; start: number }[] = [];
+
+  while (walker.nextNode()) {
+    const n = walker.currentNode as Text;
+    nodes.push({ node: n, start: accumulated.length });
+    accumulated += n.textContent || "";
+  }
+
+  const idx = accumulated.indexOf(original);
+  if (idx === -1) return;
+
+  // Find the start and end text nodes
+  for (const entry of nodes) {
+    const nodeText = entry.node.textContent || "";
+    const nodeEnd = entry.start + nodeText.length;
+
+    if (nodeEnd <= idx) continue;
+
+    // This node contains the start of the match
+    const localStart = idx - entry.start;
+    const localEnd = Math.min(nodeText.length, localStart + original.length);
+    const remaining = original.length - (localEnd - localStart);
+
+    if (remaining <= 0) {
+      // Entire match is within this single text node
+      entry.node.textContent =
+        nodeText.substring(0, localStart) +
+        replacement +
+        nodeText.substring(localStart + original.length);
+    } else {
+      // Match spans multiple nodes — replace in first node and remove from subsequent
+      entry.node.textContent = nodeText.substring(0, localStart) + replacement;
+      let toRemove = remaining;
+      for (const next of nodes) {
+        if (next.start <= entry.start) continue;
+        if (toRemove <= 0) break;
+        const nextText = next.node.textContent || "";
+        if (nextText.length <= toRemove) {
+          toRemove -= nextText.length;
+          next.node.textContent = "";
+        } else {
+          next.node.textContent = nextText.substring(toRemove);
+          toRemove = 0;
+        }
+      }
+    }
+    break;
+  }
+
+  // Dispatch InputEvent to notify rich-text editors of the change
+  element.dispatchEvent(new InputEvent("input", {
+    bubbles: true,
+    inputType: "insertText",
+    data: replacement,
+  }));
 }
 
 export function escapeHtml(str: string): string {

@@ -323,18 +323,15 @@ function attachListeners(element: HTMLElement): void {
     const currentState = elementStates.get(element);
     if (!currentState) return;
 
-    // Always clear stale underlines and badge immediately when text changes
-    clearErrors(element);
-    if (currentState.errors.length > 0) {
-      currentState.errors = [];
-      updateWidget(element, "idle");
-    }
-
-    // Get current text to check if it's now empty
+    // Get current text to check if it actually changed
     const currentText = normalizeText(getElementText(element));
 
     if (!currentText.trim() || currentText.trim().length < 10) {
       // Text is empty or too short — clear everything and don't schedule a check
+      if (currentState.errors.length > 0) {
+        clearErrors(element);
+        currentState.errors = [];
+      }
       currentState.lastText = "";
       if (currentState.debounceTimer !== null) {
         clearTimeout(currentState.debounceTimer);
@@ -342,6 +339,16 @@ function attachListeners(element: HTMLElement): void {
       }
       updateWidget(element, "idle");
       return;
+    }
+
+    // Only clear errors when text actually changed (prevents flicker from
+    // contenteditable DOM mutations that don't change the visible text)
+    if (currentText !== currentState.lastText) {
+      clearErrors(element);
+      if (currentState.errors.length > 0) {
+        currentState.errors = [];
+        updateWidget(element, "idle");
+      }
     }
 
     if (currentState.debounceTimer !== null) {

@@ -7,6 +7,26 @@ let initialized = false;
 async function init(): Promise<void> {
   if (initialized) return;
 
+  // Skip tiny/invisible iframes (tracking pixels, analytics, ad frames).
+  // These have no user-editable content and waste resources.
+  try {
+    if (window !== window.top) {
+      const w = window.innerWidth || document.documentElement?.clientWidth || 0;
+      const h = window.innerHeight || document.documentElement?.clientHeight || 0;
+      if (w < 100 || h < 100) {
+        return; // too small to contain a real editor
+      }
+      // Skip known tracking/analytics domains
+      const host = location.hostname;
+      if (/demdex\.net|doubleclick|googlesyndication|facebook\.com\/tr|analytics|pixel/i.test(host)) {
+        return;
+      }
+    }
+  } catch {
+    // cross-origin access error — we're in a cross-origin iframe, skip it
+    return;
+  }
+
   try {
     const settings = await getSettings();
     if (!settings.enabled) {
