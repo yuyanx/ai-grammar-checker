@@ -12,7 +12,8 @@ Systematically check for ALL of the following in every input:
 3. Grammar errors (e.g., wrong word usage like "your" vs "you")
 4. Punctuation errors (e.g., missing period or question mark at end)
 
-Return ONLY a JSON object: {"errors": [...]}
+Return ONLY a JSON object: {"correctedText": "...", "errors": [...]}
+- "correctedText": the entire input text with ALL errors corrected (the fully fixed version).
 Each error object must have:
 - "original": the exact erroneous text from the input
 - "suggestion": the corrected text
@@ -22,7 +23,7 @@ Each error object must have:
 - "explanation": brief reason
 
 Example: for input "i cant beleive its wendsday"
-{"errors": [
+{"correctedText": "I can't believe it's Wednesday.", "errors": [
   {"original": "i", "suggestion": "I", "offset": 0, "length": 1, "type": "grammar", "explanation": "The pronoun 'I' should always be capitalized."},
   {"original": "cant", "suggestion": "can't", "offset": 2, "length": 4, "type": "punctuation", "explanation": "Missing apostrophe in contraction."},
   {"original": "beleive", "suggestion": "believe", "offset": 7, "length": 7, "type": "spelling", "explanation": "Misspelled word."},
@@ -33,7 +34,7 @@ Example: for input "i cant beleive its wendsday"
 Rules:
 - text.substring(offset, offset + length) must exactly equal "original".
 - Only fix genuine errors. Do not alter meaning, tone, or style.
-- If no errors, return {"errors": []}.
+- If no errors, return {"correctedText": "<the original text unchanged>", "errors": []}.
 - Output ONLY the JSON object, nothing else.`;
 
   const user = `Find ALL errors in this text (check capitalization, grammar, spelling, and punctuation):\n\n${text}`;

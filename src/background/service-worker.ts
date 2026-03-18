@@ -1,33 +1,33 @@
 import { CheckRequest, CheckResponse, GrammarError } from "../shared/types.js";
 import { getSettings } from "../shared/storage.js";
 import { buildGrammarCheckPrompt } from "../shared/prompts.js";
-import { parseOpenAIResponse, parseGeminiResponse, validateErrors } from "../shared/api-parsers.js";
+import { parseOpenAIResponse, parseGeminiResponse, validateErrors, ParsedResponse } from "../shared/api-parsers.js";
 import { OPENAI_API_URL, GEMINI_API_URL, DEFAULT_OPENAI_MODEL, MAX_TEXT_LENGTH } from "../shared/constants.js";
 
 // Rate limit state lives here in the service worker — persists across all tabs/page loads
 let rateLimitedUntil = 0;
 
-// Simple LRU cache for recent checks (text → errors)
-const responseCache = new Map<string, { errors: GrammarError[]; timestamp: number }>();
+// Simple LRU cache for recent checks (text → errors + correctedText)
+const responseCache = new Map<string, { errors: GrammarError[]; correctedText?: string; timestamp: number }>();
 const CACHE_TTL = 60_000; // 1 minute
 const CACHE_MAX = 50;
 
-function getCached(text: string): GrammarError[] | null {
+function getCached(text: string): { errors: GrammarError[]; correctedText?: string } | null {
   const entry = responseCache.get(text);
   if (!entry) return null;
   if (Date.now() - entry.timestamp > CACHE_TTL) {
     responseCache.delete(text);
     return null;
   }
-  return entry.errors;
+  return { errors: entry.errors, correctedText: entry.correctedText };
 }
 
-function setCache(text: string, errors: GrammarError[]): void {
+function setCache(text: string, errors: GrammarError[], correctedText?: string): void {
   if (responseCache.size >= CACHE_MAX) {
     const oldest = responseCache.keys().next().value!;
     responseCache.delete(oldest);
   }
-  responseCache.set(text, { errors, timestamp: Date.now() });
+  responseCache.set(text, { errors, correctedText, timestamp: Date.now() });
 }
 
 // Track in-flight requests so we can abort superseded ones
@@ -84,11 +84,11 @@ async function handleCheckGrammar(
   // Check cache first
   const cached = getCached(text);
   if (cached) {
-    let errors = [...cached];
+    let errors = [...cached.errors];
     if (!settings.checkGrammar) errors = errors.filter((e) => e.type !== "grammar");
     if (!settings.checkSpelling) errors = errors.filter((e) => e.type !== "spelling");
     if (!settings.checkPunctuation) errors = errors.filter((e) => e.type !== "punctuation");
-    return { type: "CHECK_GRAMMAR_RESULT", requestId: request.requestId, errors };
+    return { type: "CHECK_GRAMMAR_RESULT", requestId: request.requestId, errors, correctedText: cached.correctedText };
   }
 
   // Abort any previous in-flight request from the same tab
@@ -100,7 +100,7 @@ async function handleCheckGrammar(
 
   const { system, user } = buildGrammarCheckPrompt(text);
 
-  let rawErrors: GrammarError[];
+  let parsed: ParsedResponse;
 
   if (settings.provider === "openai") {
     if (!settings.openaiApiKey) {
@@ -111,7 +111,7 @@ async function handleCheckGrammar(
         error: "OpenAI API key not configured",
       };
     }
-    rawErrors = await callOpenAI(system, user, settings.openaiApiKey, abortController.signal);
+    parsed = await callOpenAI(system, user, settings.openaiApiKey, abortController.signal);
   } else {
     if (!settings.geminiApiKey) {
       return {
@@ -121,17 +121,17 @@ async function handleCheckGrammar(
         error: "Gemini API key not configured",
       };
     }
-    rawErrors = await callGemini(system, user, settings.geminiApiKey, abortController.signal);
+    parsed = await callGemini(system, user, settings.geminiApiKey, abortController.signal);
   }
 
-  console.log("[AI Grammar Checker] Raw errors from API:", JSON.stringify(rawErrors));
+  console.log("[AI Grammar Checker] Raw errors from API:", JSON.stringify(parsed.errors));
 
   // Validate and filter errors
-  let errors = validateErrors(rawErrors, text);
+  let errors = validateErrors(parsed.errors, text);
   console.log("[AI Grammar Checker] Validated errors:", errors.length, JSON.stringify(errors));
 
   // Cache the unfiltered result
-  setCache(text, errors);
+  setCache(text, errors, parsed.correctedText);
 
   // Filter by user preferences
   if (!settings.checkGrammar) errors = errors.filter((e) => e.type !== "grammar");
@@ -142,6 +142,7 @@ async function handleCheckGrammar(
     type: "CHECK_GRAMMAR_RESULT",
     requestId: request.requestId,
     errors,
+    correctedText: parsed.correctedText,
   };
 }
 
@@ -150,7 +151,7 @@ async function callOpenAI(
   user: string,
   apiKey: string,
   signal?: AbortSignal
-): Promise<GrammarError[]> {
+): Promise<ParsedResponse> {
   const response = await fetch(OPENAI_API_URL, {
     method: "POST",
     signal,
@@ -185,7 +186,7 @@ async function callGemini(
   user: string,
   apiKey: string,
   signal?: AbortSignal
-): Promise<GrammarError[]> {
+): Promise<ParsedResponse> {
   const url = `${GEMINI_API_URL}?key=${apiKey}`;
   const response = await fetch(url, {
     method: "POST",
@@ -206,6 +207,7 @@ async function callGemini(
         responseSchema: {
           type: "object",
           properties: {
+            correctedText: { type: "string" },
             errors: {
               type: "array",
               items: {
@@ -222,7 +224,7 @@ async function callGemini(
               },
             },
           },
-          required: ["errors"],
+          required: ["correctedText", "errors"],
         },
       },
     }),

@@ -1,22 +1,30 @@
 import { GrammarError } from "./types.js";
 
-export function parseOpenAIResponse(responseJson: any): GrammarError[] {
+export interface ParsedResponse {
+  errors: GrammarError[];
+  correctedText?: string;
+}
+
+export function parseOpenAIResponse(responseJson: any): ParsedResponse {
   try {
     const content = responseJson.choices?.[0]?.message?.content;
-    if (!content) return [];
+    if (!content) return { errors: [] };
     const parsed = JSON.parse(content);
     const errors = parsed.errors || parsed;
-    if (!Array.isArray(errors)) return [];
-    return errors;
+    if (!Array.isArray(errors)) return { errors: [] };
+    return {
+      errors,
+      correctedText: typeof parsed.correctedText === "string" ? parsed.correctedText : undefined,
+    };
   } catch {
-    return [];
+    return { errors: [] };
   }
 }
 
-export function parseGeminiResponse(responseJson: any): GrammarError[] {
+export function parseGeminiResponse(responseJson: any): ParsedResponse {
   try {
     const parts = responseJson.candidates?.[0]?.content?.parts;
-    if (!Array.isArray(parts) || parts.length === 0) return [];
+    if (!Array.isArray(parts) || parts.length === 0) return { errors: [] };
 
     // Gemini 2.5 models may include "thought" parts before the actual response.
     // Find the last non-thought part that contains the JSON output.
@@ -28,14 +36,19 @@ export function parseGeminiResponse(responseJson: any): GrammarError[] {
       try {
         const parsed = JSON.parse(text);
         const errors = parsed.errors || parsed;
-        if (Array.isArray(errors)) return errors;
+        if (Array.isArray(errors)) {
+          return {
+            errors,
+            correctedText: typeof parsed.correctedText === "string" ? parsed.correctedText : undefined,
+          };
+        }
       } catch {
         // not valid JSON, try next part
       }
     }
-    return [];
+    return { errors: [] };
   } catch {
-    return [];
+    return { errors: [] };
   }
 }
 

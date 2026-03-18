@@ -177,6 +177,7 @@ async function checkElement(element: HTMLElement): Promise<void> {
     }
 
     state.errors = response.errors;
+    state.correctedText = response.correctedText;
 
     // Update widget state
     const visibleErrors = state.errors.filter(
@@ -199,6 +200,7 @@ async function checkElement(element: HTMLElement): Promise<void> {
           currentVisible,
           currentState.ignoredErrors,
           element.getBoundingClientRect(),
+          currentState.correctedText,
           () => {
             // onAccept: clear errors and re-check
             const s = elementStates.get(element);

@@ -21,6 +21,7 @@ export interface CheckResponse {
   type: "CHECK_GRAMMAR_RESULT";
   requestId: string;
   errors: GrammarError[];
+  correctedText?: string; // fully corrected text for "Fix All"
   error?: string;
   rateLimitedUntil?: number; // epoch ms — content script should not retry until this time
 }
@@ -39,6 +40,7 @@ export interface UserSettings {
 export interface ElementState {
   lastText: string;
   errors: GrammarError[];
+  correctedText?: string;
   ignoredErrors: Set<string>;
   debounceTimer: number | null;
 }

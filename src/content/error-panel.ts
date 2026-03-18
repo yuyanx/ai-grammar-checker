@@ -20,6 +20,7 @@ export function showErrorPanel(
   errors: GrammarError[],
   ignoredErrors: Set<string>,
   elementRect: DOMRect,
+  correctedText: string | undefined,
   onAccept: () => void,
   onDismiss: (key: string) => void
 ): void {
@@ -108,7 +109,7 @@ export function showErrorPanel(
   fixAllBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     e.preventDefault();
-    applyAllFixes(element, remainingErrors, list);
+    applyAllFixes(element, remainingErrors, list, correctedText);
     remainingErrors = [];
     updateTitle(title, 0);
     showSuccessState(list, success, fixAllBtn);
@@ -211,13 +212,14 @@ function createErrorItem(
 
 /**
  * Apply all remaining fixes at once.
- * For input/textarea: build corrected string in one pass (reverse offset order).
- * For contentEditable: apply fixes one by one in reverse offset order.
+ * Uses correctedText from the AI when available for a clean one-shot replacement.
+ * Falls back to building corrected string from individual fixes.
  */
 function applyAllFixes(
   element: HTMLElement,
   errors: GrammarError[],
-  listEl: HTMLElement
+  listEl: HTMLElement,
+  correctedText?: string
 ): void {
   // Animate all items out
   const items = listEl.querySelectorAll(".grammar-error-panel__item");
@@ -225,21 +227,26 @@ function applyAllFixes(
     (item as HTMLElement).classList.add("grammar-error-panel__item--removing");
   });
 
-  const sorted = [...errors].sort((a, b) => b.offset - a.offset);
-
   if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
-    // Build corrected string in one pass
     element.focus();
-    let value = element.value;
-    for (const err of sorted) {
-      let idx = err.offset;
-      if (idx < 0 || value.substring(idx, idx + err.original.length) !== err.original) {
-        idx = value.indexOf(err.original);
+
+    // Use AI-provided correctedText if available, otherwise build from individual fixes
+    let value: string;
+    if (correctedText) {
+      value = correctedText;
+    } else {
+      const sorted = [...errors].sort((a, b) => b.offset - a.offset);
+      value = element.value;
+      for (const err of sorted) {
+        let idx = err.offset;
+        if (idx < 0 || value.substring(idx, idx + err.original.length) !== err.original) {
+          idx = value.indexOf(err.original);
+        }
+        if (idx === -1) continue;
+        const before = value.substring(0, idx);
+        const after = value.substring(idx + err.original.length);
+        value = before + err.suggestion + after;
       }
-      if (idx === -1) continue;
-      const before = value.substring(0, idx);
-      const after = value.substring(idx + err.original.length);
-      value = before + err.suggestion + after;
     }
 
     // Try execCommand for undo support: select all text, then insert corrected version
@@ -253,9 +260,22 @@ function applyAllFixes(
 
     element.dispatchEvent(new Event("input", { bubbles: true }));
   } else if (element.isContentEditable) {
-    // Apply fixes one by one in reverse offset order with small delays
     element.focus();
-    applyFixesSequentially(element, sorted, 0);
+    if (correctedText) {
+      // For contentEditable with correctedText: select all and replace
+      const sel = window.getSelection();
+      if (sel) {
+        sel.selectAllChildren(element);
+        window.postMessage(
+          { type: "AI_GRAMMAR_APPLY_FIX", suggestion: correctedText },
+          "*"
+        );
+      }
+    } else {
+      // Fallback: apply fixes one by one in reverse offset order with small delays
+      const sorted = [...errors].sort((a, b) => b.offset - a.offset);
+      applyFixesSequentially(element, sorted, 0);
+    }
   }
 }
 
