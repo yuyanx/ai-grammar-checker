@@ -23,6 +23,7 @@ export function showErrorPanel(
   onAccept: () => void,
   onDismiss: (key: string) => void
 ): void {
+  console.log("[AI Grammar Checker] showErrorPanel called, errors:", errors.length);
   hideErrorPanel();
   hidePopover();
 
@@ -123,6 +124,7 @@ export function showErrorPanel(
   // Append to shadow root and position
   root.appendChild(panel);
   positionPanel(panel, elementRect);
+  console.log("[AI Grammar Checker] Panel appended, position:", panel.style.top, panel.style.left, "size:", panel.getBoundingClientRect().width, panel.getBoundingClientRect().height);
 
   // Close on click outside
   setTimeout(() => {
@@ -144,12 +146,14 @@ export function showErrorPanel(
   };
   document.addEventListener("keydown", panelEscHandler, true);
 
-  // Close on scroll/resize
-  panelScrollHandler = () => {
-    animateHidePanel();
-  };
-  window.addEventListener("scroll", panelScrollHandler, true);
-  window.addEventListener("resize", panelScrollHandler);
+  // Close on scroll/resize (with delay to avoid immediate closure from page scroll events)
+  setTimeout(() => {
+    panelScrollHandler = () => {
+      animateHidePanel();
+    };
+    window.addEventListener("scroll", panelScrollHandler, true);
+    window.addEventListener("resize", panelScrollHandler);
+  }, 300);
 
   // Close on user typing (errors become stale)
   panelInputHandler = () => {
@@ -328,6 +332,7 @@ function positionPanel(panel: HTMLElement, elementRect: DOMRect): void {
 
 function animateHidePanel(): void {
   if (!currentPanel) return;
+  console.log("[AI Grammar Checker] animateHidePanel called", new Error().stack);
   const panel = currentPanel;
   panel.classList.add("grammar-error-panel--closing");
   cleanupListeners();
