@@ -1,7 +1,7 @@
 import { getOrCreateContainer, getShadowRoot, getShadowHost } from "./shadow-host.js";
 import { isDarkMode } from "./dark-mode.js";
 
-export type WidgetState = "idle" | "checking" | "errors" | "clean";
+export type WidgetState = "idle" | "checking" | "errors" | "clean" | "error";
 
 const widgetMap = new WeakMap<HTMLElement, string>();
 const widgetStates = new WeakMap<HTMLElement, {
@@ -116,6 +116,21 @@ function renderWidget(element: HTMLElement): void {
       widget.style.transition = "opacity 0.3s";
       setTimeout(() => container.innerHTML = "", 300);
     }, 3000);
+  } else if (state === "error") {
+    widget.className = `grammar-widget grammar-widget--error${compactClass}`;
+    widget.innerHTML = `
+      <span class="grammar-widget__error-icon">!</span>
+      <div class="grammar-widget__tooltip${dark ? " grammar-widget__tooltip--dark" : ""}">Check failed — will retry</div>
+    `;
+    // Auto-hide after 4 seconds
+    setTimeout(() => {
+      const current = widgetStates.get(element);
+      if (!current || current.state !== "error") return;
+      widgetStates.set(element, { state: "idle", errorCount: 0 });
+      widget.style.opacity = "0";
+      widget.style.transition = "opacity 0.3s";
+      setTimeout(() => container.innerHTML = "", 300);
+    }, 4000);
   }
 
   container.appendChild(widget);

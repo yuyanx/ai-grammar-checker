@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.6.6
+
+### Improvements
+- Automatic single retry after 2 seconds on transient API failures (network errors, 500s)
+- New orange "!" error widget state shows briefly when a check fails, auto-hides after 4 seconds
+- Rate-limited errors skip retry since the service worker handles its own backoff
+
 ## v1.6.5
 
 ### Bug Fixes

@@ -273,6 +273,21 @@ export const CONTENT_CSS = `
     background: #48bb78;
   }
 
+  .grammar-widget--error {
+    background: #ed8936;
+  }
+
+  .grammar-widget__error-icon {
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .grammar-widget--compact .grammar-widget__error-icon {
+    font-size: 10px;
+  }
+
   .grammar-widget__spinner {
     width: 14px;
     height: 14px;

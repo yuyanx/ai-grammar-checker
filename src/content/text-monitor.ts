@@ -409,7 +409,7 @@ function attachListeners(element: HTMLElement): void {
   }
 }
 
-async function checkElement(element: HTMLElement, autoShowPanel = false): Promise<void> {
+async function checkElement(element: HTMLElement, autoShowPanel = false, retryCount = 0): Promise<void> {
   if (configuredCache === null) configuredCache = await isConfigured();
   if (!configuredCache) {
     console.log("[AI Grammar Checker] API key not configured, skipping check");
@@ -458,7 +458,16 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
       if (state.pendingText === text) {
         state.pendingText = null;
       }
-      console.log("[AI Grammar Checker] API error:", response.error);
+      const isRateLimit = response.error.includes("Rate limit") || response.rateLimitedUntil;
+      if (!isRateLimit && retryCount < 1) {
+        console.log("[AI Grammar Checker] API error, retrying in 2s:", response.error);
+        updateWidget(element, "error");
+        setTimeout(() => {
+          if (elementStates.get(element)) checkElement(element, autoShowPanel, retryCount + 1);
+        }, 2000);
+        return;
+      }
+      console.log("[AI Grammar Checker] API error (no retry):", response.error);
       updateWidget(element, "idle");
       return;
     }
@@ -512,8 +521,16 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
       state.pendingText = null;
     }
     if (err?.message?.includes("Extension context invalidated")) return;
-    console.warn("[AI Grammar Checker] Error:", err);
-    updateWidget(element, "idle");
+    if (retryCount < 1) {
+      console.warn("[AI Grammar Checker] Error, retrying in 2s:", err);
+      updateWidget(element, "error");
+      setTimeout(() => {
+        if (elementStates.get(element)) checkElement(element, autoShowPanel, retryCount + 1);
+      }, 2000);
+    } else {
+      console.warn("[AI Grammar Checker] Error (no retry):", err);
+      updateWidget(element, "idle");
+    }
   }
 }
 
