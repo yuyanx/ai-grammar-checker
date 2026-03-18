@@ -10,23 +10,21 @@ npm run build
 Load `dist/` as unpacked extension in Chrome.
 
 ## Current State
-- Current package/manifest version: `1.6.5`
+- Current package/manifest version: `1.6.6`
 - `npm run build` passes locally
-- Instagram compact badge placement is now explicitly anchored to visible action labels like `Post`, with a hard left-side safety gap to avoid overlap
-- Compact error dots are reduced to `12px` for crowded editors
-- Verified with a rendered local fixture using the real widget code:
-  - Fixture: `/tmp/ig-widget-test/index.html`
-  - Screenshot: `/tmp/ig-widget-test/result.png`
-  - Result: `PASS gap=16px widget=694-710 post=726-764`
+- Error panel feature complete: clicking the red badge opens a panel listing all errors with Fix/Dismiss per error and Fix All
+- Automatic single retry on transient API failures with visible orange "!" widget feedback
+- Instagram compact badge placement is explicitly anchored to visible action labels like `Post`, with a hard left-side safety gap
+- Compact error dots are `12px` for crowded editors
 - `AGENTS.md` is still untracked locally and should stay out of the commit unless explicitly requested
 
 ## Recent Changes (newest first)
-1. **Instagram compact badge fix** — `status-widget.ts` now explicitly detects visible action labels such as `Post`, `Comment`, `Reply`, and `Send` and anchors the compact dot to the left of that label with a hard safety gap
-2. **Compact badge sizing/placement cleanup** — compact error dots are now `12px`, and compact placement uses rendered text bounds instead of the full contenteditable box
-3. **Rendered obstacle detection fix** — right-side action text in shared wrappers is now treated as occupied space instead of being filtered out
-4. **Contenteditable offset integrity** — added a shared visible-text snapshot/mapping utility so multiline rich-text editors, duplicate words, and fix application all use the same offsets
-5. **Retry-state fix** — unchanged text is retryable after transient API failures instead of being stuck until the user types again
-6. **Version/changelog updates** — package/manifest/changelog were updated through `1.6.5`
+1. **Error panel feature** (v1.6.6) — `error-panel.ts` new file: click the red badge to see all errors listed with Fix/Dismiss per error, Fix All button, success state, dark mode, auto-close on typing/scroll/Escape
+2. **Automatic retry** (v1.6.6) — `text-monitor.ts` retries once after 2s on transient API failures; `status-widget.ts` shows orange "!" widget during retry; rate-limited errors skip retry
+3. **Instagram compact badge fix** (v1.6.5) — `status-widget.ts` explicitly detects visible action labels (`Post`, `Comment`, `Reply`, `Send`) and anchors the compact dot with a hard safety gap
+4. **Compact badge sizing/placement cleanup** — compact error dots are `12px`, placement uses rendered text bounds instead of the full contenteditable box
+5. **Contenteditable offset integrity** — shared visible-text snapshot/mapping utility (`contenteditable-snapshot.ts`) for consistent offsets across underlines, popovers, and fixes
+6. **Retry-state fix** — unchanged text is retryable after transient API failures via `pendingText` tracking
 
 ## Architecture
 
@@ -69,13 +67,8 @@ Load `dist/` as unpacked extension in Chrome.
 - Large text inputs may still be slow because the full normalized text is sent to the API each time
 - Instagram placement is verified on a local fixture, but live-page DOM inspection in Safari is limited because `do JavaScript` from Apple Events is disabled on this machine
 
-## Commands Run In This Session
+## Commands
 ```bash
-git status --short --branch
-npm run build
-osascript -e 'tell application "Safari" to count windows'
-osascript -e 'tell application "Safari" to get URL of current tab of front window'
-./node_modules/.bin/esbuild /tmp/ig-widget-test/entry.ts --bundle --format=iife --outfile=/tmp/ig-widget-test/entry.js
-'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless=new --disable-gpu --virtual-time-budget=4000 --dump-dom file:///tmp/ig-widget-test/index.html
-'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless=new --disable-gpu --hide-scrollbars --window-size=900,400 --virtual-time-budget=4000 --screenshot=/tmp/ig-widget-test/result.png file:///tmp/ig-widget-test/index.html
+npm run build          # Build extension to dist/
+npx tsc                # Type-check only
 ```

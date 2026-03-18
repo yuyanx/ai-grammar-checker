@@ -2,6 +2,13 @@
 
 ## v1.6.6
 
+### Features
+- Click the red error badge to open an error panel listing all issues with per-error Fix/Dismiss buttons and a global Fix All
+- Error panel supports both textarea/input (one-shot string splice) and contentEditable (sequential fallback) editors
+- Panel auto-closes on user typing, scroll, resize, Escape, or click outside
+- Success state ("All issues fixed!") shown after last error resolved, auto-closes after 1.5s
+- Dark mode support for the error panel matching existing popover theme
+
 ### Improvements
 - Automatic single retry after 2 seconds on transient API failures (network errors, 500s)
 - New orange "!" error widget state shows briefly when a check fails, auto-hides after 4 seconds
