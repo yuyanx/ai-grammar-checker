@@ -10,21 +10,22 @@ npm run build
 Load `dist/` as unpacked extension in Chrome.
 
 ## Current State
-- Current package/manifest version: `1.6.6`
+- Current package/manifest version: `1.6.14`
 - `npm run build` passes locally
 - Error panel feature complete: clicking the red badge opens a panel listing all errors with Fix/Dismiss per error and Fix All
 - Automatic single retry on transient API failures with visible orange "!" widget feedback
 - Instagram compact badge placement is explicitly anchored to visible action labels like `Post`, with a hard left-side safety gap
 - Compact error dots are `12px` for crowded editors
+- X home search box compact tooltip clipping is a known issue for now; outside badge placement is kept, but the hover issue-count tag can still clip in that edge case
 - `AGENTS.md` is still untracked locally and should stay out of the commit unless explicitly requested
 
 ## Recent Changes (newest first)
-1. **Error panel feature** (v1.6.6) — `error-panel.ts` new file: click the red badge to see all errors listed with Fix/Dismiss per error, Fix All button, success state, dark mode, auto-close on typing/scroll/Escape
-2. **Automatic retry** (v1.6.6) — `text-monitor.ts` retries once after 2s on transient API failures; `status-widget.ts` shows orange "!" widget during retry; rate-limited errors skip retry
-3. **Instagram compact badge fix** (v1.6.5) — `status-widget.ts` explicitly detects visible action labels (`Post`, `Comment`, `Reply`, `Send`) and anchors the compact dot with a hard safety gap
-4. **Compact badge sizing/placement cleanup** — compact error dots are `12px`, placement uses rendered text bounds instead of the full contenteditable box
-5. **Contenteditable offset integrity** — shared visible-text snapshot/mapping utility (`contenteditable-snapshot.ts`) for consistent offsets across underlines, popovers, and fixes
-6. **Retry-state fix** — unchanged text is retryable after transient API failures via `pendingText` tracking
+1. **Known issue recorded** (v1.6.14) — X home search box can still clip the compact badge's hover issue-count tooltip near the viewport edge; defer further work on this edge case for now
+2. **Error panel feature** (v1.6.6) — `error-panel.ts` new file: click the red badge to see all errors listed with Fix/Dismiss per error, Fix All button, success state, dark mode, auto-close on typing/scroll/Escape
+3. **Automatic retry** (v1.6.6) — `text-monitor.ts` retries once after 2s on transient API failures; `status-widget.ts` shows orange "!" widget during retry; rate-limited errors skip retry
+4. **Instagram compact badge fix** (v1.6.5) — `status-widget.ts` explicitly detects visible action labels (`Post`, `Comment`, `Reply`, `Send`) and anchors the compact dot with a hard safety gap
+5. **Compact badge sizing/placement cleanup** — compact error dots are `12px`, placement uses rendered text bounds instead of the full contenteditable box
+6. **Contenteditable offset integrity** — shared visible-text snapshot/mapping utility (`contenteditable-snapshot.ts`) for consistent offsets across underlines, popovers, and fixes
 
 ## Architecture
 
@@ -66,6 +67,7 @@ Load `dist/` as unpacked extension in Chrome.
 - Error detection quality still depends heavily on prompt tuning (`src/shared/prompts.ts`)
 - Large text inputs may still be slow because the full normalized text is sent to the API each time
 - Instagram placement is verified on a local fixture, but live-page DOM inspection in Safari is limited because `do JavaScript` from Apple Events is disabled on this machine
+- X home search box still clips the compact badge's hover tooltip in some layouts even after outside-badge fallback; treat as deferred edge case unless it becomes higher priority
 
 ## Commands
 ```bash

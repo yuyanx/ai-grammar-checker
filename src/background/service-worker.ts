@@ -1,4 +1,4 @@
-import { CheckRequest, CheckResponse, GrammarError } from "../shared/types.js";
+import { CheckRequest, CheckResponse, GrammarError, PrewarmRequest, PrewarmResponse } from "../shared/types.js";
 import { getSettings } from "../shared/storage.js";
 import { buildGrammarCheckPrompt } from "../shared/prompts.js";
 import { parseOpenAIResponse, parseGeminiResponse, validateErrors, ParsedResponse } from "../shared/api-parsers.js";
@@ -59,6 +59,19 @@ const inflightAborts = new Map<string, AbortController>();
 
 chrome.runtime.onMessage.addListener(
   (message: any, sender, sendResponse) => {
+    if (message.type === "PREWARM") {
+      handlePrewarm(message)
+        .then(sendResponse)
+        .catch(() => {
+          const response: PrewarmResponse = {
+            type: "PREWARM_RESULT",
+            configured: false,
+          };
+          sendResponse(response);
+        });
+      return true;
+    }
+
     if (message.type === "CHECK_GRAMMAR") {
       // If rate limited, reject immediately without making an API call
       if (Date.now() < rateLimitedUntil) {
@@ -175,6 +188,18 @@ async function handleCheckGrammar(
     requestId: request.requestId,
     errors,
     correctedText: parsed.correctedText,
+  };
+}
+
+async function handlePrewarm(_request: PrewarmRequest): Promise<PrewarmResponse> {
+  const settings = await getCachedSettings();
+  const configured = settings.provider === "openai"
+    ? settings.openaiApiKey.length > 0
+    : settings.geminiApiKey.length > 0;
+
+  return {
+    type: "PREWARM_RESULT",
+    configured,
   };
 }
 

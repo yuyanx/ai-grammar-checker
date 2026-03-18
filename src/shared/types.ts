@@ -18,6 +18,10 @@ export interface CheckRequest {
   sourceId?: string;
 }
 
+export interface PrewarmRequest {
+  type: "PREWARM";
+}
+
 export interface CheckResponse {
   type: "CHECK_GRAMMAR_RESULT";
   requestId: string;
@@ -25,6 +29,11 @@ export interface CheckResponse {
   correctedText?: string; // fully corrected text for "Fix All"
   error?: string;
   rateLimitedUntil?: number; // epoch ms — content script should not retry until this time
+}
+
+export interface PrewarmResponse {
+  type: "PREWARM_RESULT";
+  configured: boolean;
 }
 
 export interface UserSettings {

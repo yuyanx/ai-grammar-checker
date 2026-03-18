@@ -265,6 +265,11 @@ export const CONTENT_CSS = `
     background: #a0aec0;
   }
 
+  .grammar-widget--ready {
+    background: #2563eb;
+    border-color: #ffffff;
+  }
+
   .grammar-widget--errors {
     background: #e53e3e;
   }

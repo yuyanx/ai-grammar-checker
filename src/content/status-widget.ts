@@ -1,7 +1,7 @@
 import { getOrCreateContainer, getShadowRoot, getShadowHost } from "./shadow-host.js";
 import { isDarkMode } from "./dark-mode.js";
 
-export type WidgetState = "idle" | "checking" | "errors" | "clean" | "error";
+export type WidgetState = "idle" | "ready" | "checking" | "errors" | "clean" | "error";
 
 const widgetMap = new WeakMap<HTMLElement, string>();
 const widgetStates = new WeakMap<HTMLElement, {
@@ -15,6 +15,7 @@ const VIEWPORT_MARGIN = 8;
 const COMPACT_INSET = 8;
 const COMPACT_SEARCH_STEP = 2;
 const COMPACT_ACTION_GAP = 16;
+const COMPACT_OUTSIDE_GAP = 6;
 
 /**
  * Show or update the floating status widget near a text field.
@@ -26,6 +27,17 @@ export function updateWidget(
   errorCount: number = 0,
   onClickErrors?: () => void
 ): void {
+  const current = widgetStates.get(element);
+  if (
+    current &&
+    current.state === state &&
+    current.errorCount === errorCount &&
+    current.onClickErrors === onClickErrors &&
+    state !== "clean"
+  ) {
+    return;
+  }
+
   widgetStates.set(element, {
     state,
     errorCount,
@@ -77,7 +89,6 @@ function renderWidget(element: HTMLElement): void {
     : getCornerWidgetPosition(anchorRect, size, inset);
   widget.style.top = `${position.top}px`;
   widget.style.left = `${position.left}px`;
-
   // Build class name including compact modifier
   const compactClass = isCompact ? " grammar-widget--compact" : "";
 
@@ -86,6 +97,12 @@ function renderWidget(element: HTMLElement): void {
     widget.innerHTML = `
       <div class="grammar-widget__spinner"></div>
       <div class="grammar-widget__tooltip${dark ? " grammar-widget__tooltip--dark" : ""}">Checking...</div>
+    `;
+  } else if (state === "ready") {
+    const dotClass = isCompact ? " grammar-widget--compact-dot" : "";
+    widget.className = `grammar-widget grammar-widget--ready${compactClass}${dotClass}`;
+    widget.innerHTML = `
+      <div class="grammar-widget__tooltip${dark ? " grammar-widget__tooltip--dark" : ""}">Ready to check</div>
     `;
   } else if (state === "errors") {
     const dotClass = isCompact ? " grammar-widget--compact-dot" : "";
@@ -134,6 +151,7 @@ function renderWidget(element: HTMLElement): void {
   }
 
   container.appendChild(widget);
+  positionWidgetTooltip(widget);
 }
 
 export function removeWidget(element: HTMLElement): void {
@@ -171,12 +189,35 @@ function getCornerWidgetPosition(rect: DOMRect, size: number, inset: number): { 
 }
 
 function getCompactWidgetSize(state: WidgetState): number {
-  if (state === "errors") return 12;
+  if (state === "errors" || state === "ready") return 12;
   return 18;
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function positionWidgetTooltip(widget: HTMLElement): void {
+  const tooltip = widget.querySelector<HTMLElement>(".grammar-widget__tooltip");
+  if (!tooltip) return;
+
+  tooltip.style.left = "50%";
+  tooltip.style.right = "auto";
+  tooltip.style.transform = "translateX(-50%)";
+
+  const rect = tooltip.getBoundingClientRect();
+  if (rect.left < VIEWPORT_MARGIN) {
+    tooltip.style.left = "0";
+    tooltip.style.right = "auto";
+    tooltip.style.transform = "none";
+    return;
+  }
+
+  if (rect.right > window.innerWidth - VIEWPORT_MARGIN) {
+    tooltip.style.left = "auto";
+    tooltip.style.right = "0";
+    tooltip.style.transform = "none";
+  }
 }
 
 function getCompactWidgetPosition(
@@ -197,12 +238,18 @@ function getCompactWidgetPosition(
   const safeActionLeft = actionStart !== null
     ? Math.max(minLeft, actionStart - size - COMPACT_ACTION_GAP)
     : null;
+  const outsidePosition = getOutsideCompactWidgetPosition(anchor.rect, size, preferredTop);
+
+  if (maxLeft < textBoundary) {
+    return outsidePosition;
+  }
 
   if (safeActionLeft !== null) {
     const pinnedLeft = clamp(safeActionLeft, minLeft, maxLeft);
     if (pinnedLeft >= textBoundary) {
       return { top: preferredTop, left: pinnedLeft };
     }
+    return outsidePosition;
   }
 
   const obstacleRects = [
@@ -223,16 +270,28 @@ function getCompactWidgetPosition(
     }
   }
 
-  if (safeActionLeft !== null) {
-    return {
-      top: preferredTop,
-      left: clamp(safeActionLeft, minLeft, maxLeft),
-    };
+  return outsidePosition;
+}
+
+function getOutsideCompactWidgetPosition(
+  anchorRect: DOMRect,
+  size: number,
+  preferredTop: number
+): { top: number; left: number } {
+  const top = clamp(preferredTop, VIEWPORT_MARGIN, window.innerHeight - size - VIEWPORT_MARGIN);
+  const outsideRight = anchorRect.right + COMPACT_OUTSIDE_GAP;
+  if (outsideRight + size <= window.innerWidth - VIEWPORT_MARGIN) {
+    return { top, left: outsideRight };
+  }
+
+  const outsideLeft = anchorRect.left - size - COMPACT_OUTSIDE_GAP;
+  if (outsideLeft >= VIEWPORT_MARGIN) {
+    return { top, left: outsideLeft };
   }
 
   return {
-    top: preferredTop,
-    left: clamp(textBoundary, minLeft, maxLeft),
+    top,
+    left: clamp(anchorRect.right - size - COMPACT_INSET, VIEWPORT_MARGIN, window.innerWidth - size - VIEWPORT_MARGIN),
   };
 }
 

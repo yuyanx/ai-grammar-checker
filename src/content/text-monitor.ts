@@ -1,4 +1,4 @@
-import { GrammarError, CheckRequest, CheckResponse, ElementState } from "../shared/types.js";
+import { GrammarError, CheckRequest, CheckResponse, ElementState, PrewarmResponse } from "../shared/types.js";
 import { getSettings, isConfigured } from "../shared/storage.js";
 import { renderErrors, clearErrors, clearAllErrors, errorKey } from "./underline-renderer.js";
 import { updateWidget, removeWidget, removeAllWidgets, refreshWidget } from "./status-widget.js";
@@ -14,6 +14,9 @@ let enabled = true;
 let configuredCache: boolean | null = null;
 let lastUrl = location.href;
 let sourceCounter = 0;
+let backgroundPrewarmed = false;
+let backgroundPrewarmPromise: Promise<void> | null = null;
+const FOCUS_CHECK_DELAY_MS = 150;
 
 // Track recently applied fixes to prevent oscillation (suggestion reverting back to original)
 // Maps element → Set of "suggestion→original" pairs that should be suppressed
@@ -179,12 +182,17 @@ export async function startMonitoring(): Promise<void> {
     if (!(target instanceof HTMLElement)) return;
 
     const el = findEditableRoot(target);
-    if (el && !elementStates.has(el)) {
-      if (!shouldSkipElement(el)) {
-        console.log("[AI Grammar Checker] focusin detected editable:", el.tagName, el.className, el.getAttribute("contenteditable"), el.getAttribute("role"));
-        attachListeners(el);
-        trackedElements.add(el);
-      }
+    if (!el) return;
+
+    if (!elementStates.has(el) && !shouldSkipElement(el)) {
+      console.log("[AI Grammar Checker] focusin detected editable:", el.tagName, el.className, el.getAttribute("contenteditable"), el.getAttribute("role"));
+      attachListeners(el);
+      trackedElements.add(el);
+    }
+
+    if (elementStates.has(el)) {
+      void prewarmBackground();
+      primeElementOnFocus(el);
     }
   }, true);
 
@@ -345,7 +353,11 @@ function attachListeners(element: HTMLElement): void {
         clearTimeout(currentState.debounceTimer);
         currentState.debounceTimer = null;
       }
-      updateWidget(element, "idle");
+      if (document.activeElement === element || element.contains(document.activeElement)) {
+        updateWidget(element, "ready");
+      } else {
+        updateWidget(element, "idle");
+      }
       return;
     }
 
@@ -407,6 +419,58 @@ function attachListeners(element: HTMLElement): void {
     observer.observe(element, { childList: true, subtree: true, characterData: true });
     state.observers.push(observer);
   }
+}
+
+async function prewarmBackground(): Promise<void> {
+  if (backgroundPrewarmed) return;
+  if (backgroundPrewarmPromise) return backgroundPrewarmPromise;
+
+  backgroundPrewarmPromise = chrome.runtime.sendMessage({ type: "PREWARM" })
+    .then((response?: PrewarmResponse) => {
+      if (response?.type === "PREWARM_RESULT") {
+        configuredCache = response.configured;
+      }
+      backgroundPrewarmed = true;
+    })
+    .catch(() => {
+      // Ignore prewarm failures — normal checks will still work.
+    })
+    .finally(() => {
+      backgroundPrewarmPromise = null;
+    });
+
+  return backgroundPrewarmPromise;
+}
+
+function primeElementOnFocus(element: HTMLElement): void {
+  const state = elementStates.get(element);
+  if (!state) return;
+
+  const visibleErrors = state.errors.filter(
+    (e) => !state.ignoredErrors.has(errorKey(e))
+  );
+  if (visibleErrors.length > 0) {
+    updateWidget(element, "errors", visibleErrors.length, () => {
+      openErrorPanelForElement(element);
+    });
+    return;
+  }
+
+  const text = normalizeText(getElementText(element));
+  if (!text.trim() || text.trim().length < 10) {
+    updateWidget(element, "ready");
+    return;
+  }
+
+  if (text === state.lastText || text === state.pendingText) return;
+
+  updateWidget(element, "checking");
+  if (state.debounceTimer !== null) {
+    clearTimeout(state.debounceTimer);
+  }
+  state.debounceTimer = window.setTimeout(async () => {
+    await checkElement(element);
+  }, Math.min(debounceMs, FOCUS_CHECK_DELAY_MS));
 }
 
 async function checkElement(element: HTMLElement, autoShowPanel = false, retryCount = 0): Promise<void> {

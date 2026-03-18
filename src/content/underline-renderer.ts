@@ -188,12 +188,15 @@ function renderForInput(
     const idx = parseInt(span.getAttribute("data-error-idx")!);
     const error = errors[idx];
     const spanRect = span.getBoundingClientRect();
+    const underlineTop = element instanceof HTMLInputElement
+      ? getSingleLineInputUnderlineTop(rect, computed)
+      : spanRect.bottom - 4;
 
     const underline = document.createElement("div");
     underline.className = `grammar-underline grammar-underline--${error.type}`;
     underline.style.position = "fixed";
     underline.style.left = `${spanRect.left}px`;
-    underline.style.top = `${spanRect.bottom - 4}px`;
+    underline.style.top = `${underlineTop}px`;
     underline.style.width = `${spanRect.width}px`;
     underline.style.height = "4px";
     underline.style.pointerEvents = "auto";
@@ -294,6 +297,45 @@ function getInputInsertionAnchorRect(measurer: HTMLElement, offset: number, fall
   }
 
   return new DOMRect(fallbackRect.right - 8, fallbackRect.bottom - 20, 8, 16);
+}
+
+function getSingleLineInputUnderlineTop(
+  rect: DOMRect,
+  computed: CSSStyleDeclaration
+): number {
+  const borderTop = parsePixelValue(computed.borderTopWidth);
+  const borderBottom = parsePixelValue(computed.borderBottomWidth);
+  const paddingTop = parsePixelValue(computed.paddingTop);
+  const paddingBottom = parsePixelValue(computed.paddingBottom);
+  const fontSize = parsePixelValue(computed.fontSize) || 16;
+  const lineHeight = getResolvedLineHeight(computed, fontSize);
+  const innerHeight = Math.max(rect.height - borderTop - borderBottom, lineHeight);
+  const centeredTop = rect.top + borderTop + Math.max((innerHeight - lineHeight) / 2, 0);
+  const contentTop = rect.top + borderTop + paddingTop;
+  const contentBottom = rect.bottom - borderBottom - paddingBottom;
+  const textTop = Math.max(centeredTop, contentTop);
+  const textBottom = Math.min(textTop + lineHeight, contentBottom || rect.bottom);
+  return Math.max(rect.top, textBottom - 4);
+}
+
+function getResolvedLineHeight(computed: CSSStyleDeclaration, fontSize: number): number {
+  const raw = computed.lineHeight;
+  if (!raw || raw === "normal") {
+    return fontSize * 1.2;
+  }
+  const parsed = parseFloat(raw);
+  if (Number.isNaN(parsed)) {
+    return fontSize * 1.2;
+  }
+  if (raw.endsWith("px")) {
+    return parsed;
+  }
+  return parsed * fontSize;
+}
+
+function parsePixelValue(value: string): number {
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function getContentEditableInsertionRect(

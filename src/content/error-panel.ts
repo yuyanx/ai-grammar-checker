@@ -4,7 +4,6 @@ import { isDarkMode } from "./dark-mode.js";
 import { applyFix, escapeHtml, hidePopover } from "./popover.js";
 import { errorKey } from "./underline-renderer.js";
 import { trackAppliedFix } from "./text-monitor.js";
-import { getContentEditableText } from "./contenteditable-snapshot.js";
 
 let currentPanel: HTMLElement | null = null;
 let currentElement: HTMLElement | null = null;
@@ -276,50 +275,14 @@ function applyAllFixes(
     element.dispatchEvent(new Event("input", { bubbles: true }));
   } else if (element.isContentEditable) {
     element.focus();
-    const textBefore = getContentEditableText(element);
-
-    // Try correctedText full replacement first, then fall back to sequential fixes
-    const fallbackToSequential = () => {
-      console.log("[AI Grammar Checker] Fix All: falling back to sequential fixes");
-      const sorted = [...errors].sort((a, b) => b.offset - a.offset);
-      applyFixesSequentially(element, sorted, 0);
-    };
-
-    if (correctedText) {
-      // For contentEditable with correctedText: select all and replace
-      const sel = window.getSelection();
-      if (sel) {
-        sel.selectAllChildren(element);
-
-        // Try execCommand directly first
-        let inserted = false;
-        try {
-          inserted = document.execCommand("insertText", false, correctedText);
-        } catch {
-          inserted = false;
-        }
-
-        if (!inserted) {
-          // Try via MAIN world page-script
-          window.postMessage(
-            { type: "AI_GRAMMAR_APPLY_FIX", suggestion: correctedText },
-            "*"
-          );
-        }
-
-        // Verify: if text hasn't changed, fall back to sequential individual fixes
-        setTimeout(() => {
-          const textAfter = getContentEditableText(element);
-          if (textAfter === textBefore) {
-            fallbackToSequential();
-          }
-        }, 150);
-      } else {
-        fallbackToSequential();
-      }
-    } else {
-      fallbackToSequential();
-    }
+    // Rich-text editors like X keep internal editor state separate from the
+    // visible DOM. Replacing the entire contenteditable value in one shot can
+    // leave the visible composer frozen while the real editor state keeps
+    // changing underneath. Applying fixes one-by-one preserves the editor's
+    // own mutation flow much more reliably.
+    console.log("[AI Grammar Checker] Fix All: using sequential fixes for contenteditable");
+    const sorted = [...errors].sort((a, b) => b.offset - a.offset);
+    applyFixesSequentially(element, sorted, 0);
   }
 }
 

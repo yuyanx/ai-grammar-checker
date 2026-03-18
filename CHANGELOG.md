@@ -1,5 +1,65 @@
 # Changelog
 
+## v1.8.1
+
+### Bug Fixes
+- Make the compact ready-state badge use the same small dot size as the compact issue badge instead of the larger compact widget size
+
+## v1.8.0
+
+### Improvements
+- Simplify the new ready-state badge to a solid blue indicator
+- Stop re-rendering identical widget states so the ready badge stays visually stable while users type in short drafts
+
+## v1.7.0
+
+### Features
+- Prewarm the background worker on editor focus and show a lightweight ready badge immediately so supported editors feel prepared before typing starts
+- Trigger a faster first grammar check when focusing an editor that already contains enough text, instead of waiting for the normal full debounce path
+
+### Improvements
+- Keep short focused editors in a neutral ready state instead of hiding the widget entirely, reducing visual pop-in when users start typing
+
+## v1.6.14
+
+### Notes
+- Record the X home search compact tooltip clipping as a known deferred edge case; outside badge placement remains enabled, but further tooltip polish is postponed for now
+
+## v1.6.13
+
+### Bug Fixes
+- Clamp compact widget tooltips from their real rendered bounds after layout so issue-count labels stay fully visible even when outside-positioned badges sit near the viewport edge
+
+## v1.6.12
+
+### Bug Fixes
+- Preserve compact tooltip alignment classes after widget rendering so outside-positioned badges actually use the corrected left/right tooltip placement instead of falling back to clipped center alignment
+
+## v1.6.11
+
+### Bug Fixes
+- Choose compact tooltip alignment from actual free space on each side of the badge so outside-positioned badges near the right edge no longer keep their issue labels clipped
+
+## v1.6.10
+
+### Bug Fixes
+- Make compact widget tooltips viewport-aware so issue-count labels stay readable near screen edges instead of being clipped when badges sit outside tiny fields
+
+## v1.6.9
+
+### Bug Fixes
+- Position underlines in single-line inputs from the input's own text baseline metrics instead of the mirror span box so custom search fields like X no longer draw underlines on top of the text
+
+## v1.6.8
+
+### Bug Fixes
+- Add an outside-anchor fallback for compact badges so cramped editors like the X home search box place the dot just outside the field instead of overlapping text or built-in controls
+
+## v1.6.7
+
+### Bug Fixes
+- Stop using one-shot full-content replacement for contenteditable Fix All so rich-text composers like X keep their visible editor state editable after grammar corrections
+
 ## v1.6.6
 
 ### Features
