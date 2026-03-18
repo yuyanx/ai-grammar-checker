@@ -127,20 +127,24 @@ export async function startMonitoring(): Promise<void> {
         debounceMs = (newSettings.debounceMs as number) || 800;
         enabled = newSettings.enabled as boolean;
         if (!enabled) {
-          document.querySelectorAll("textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only']").forEach((el) => {
-            clearErrors(el as HTMLElement);
-            removeWidget(el as HTMLElement);
-          });
+          for (const el of trackedElements) {
+            clearErrors(el);
+            removeWidget(el);
+          }
         }
       }
     }
   });
 }
 
+const TEXT_INPUT_SELECTORS = "textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only']";
+
 function scanForElements(root: HTMLElement): void {
-  const selectors = "textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only']";
-  const elements: HTMLElement[] = root.matches?.(selectors) ? [root] : [];
-  root.querySelectorAll<HTMLElement>(selectors).forEach((el) => elements.push(el));
+  const elements: HTMLElement[] = root.matches?.(TEXT_INPUT_SELECTORS) ? [root] : [];
+  root.querySelectorAll<HTMLElement>(TEXT_INPUT_SELECTORS).forEach((el) => elements.push(el));
+
+  // Traverse into shadow roots to find inputs inside web components
+  walkShadowRoots(root, elements);
 
   for (const el of elements) {
     if (el instanceof HTMLElement && !elementStates.has(el)) {
@@ -148,6 +152,20 @@ function scanForElements(root: HTMLElement): void {
       if (shouldSkipElement(el)) continue;
       attachListeners(el);
       trackedElements.add(el);
+    }
+  }
+}
+
+function walkShadowRoots(root: HTMLElement | ShadowRoot, out: HTMLElement[]): void {
+  const children = root instanceof HTMLElement
+    ? [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]
+    : Array.from(root.querySelectorAll<HTMLElement>("*"));
+
+  for (const el of children) {
+    const sr = el.shadowRoot;
+    if (sr) {
+      sr.querySelectorAll<HTMLElement>(TEXT_INPUT_SELECTORS).forEach((found) => out.push(found));
+      walkShadowRoots(sr, out);
     }
   }
 }
@@ -402,10 +420,7 @@ function renderErrorsForElement(element: HTMLElement): void {
 }
 
 function reRenderAll(): void {
-  const allElements = document.querySelectorAll(
-    "textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only']"
-  );
-  for (const el of allElements) {
+  for (const el of trackedElements) {
     if (el instanceof HTMLElement) {
       const state = elementStates.get(el);
       if (state && state.errors.length > 0) {
