@@ -285,6 +285,8 @@ export function applyFix(
     element.setSelectionRange(cursorPos, cursorPos);
     element.dispatchEvent(new Event("input", { bubbles: true }));
   } else if (element.isContentEditable) {
+    // Capture text before fix for verification
+    const textBefore = element.innerText;
     const selectionSet = setContentEditableSelection(element, error);
     if (selectionSet) {
       // Try execCommand directly first (works in isolated world for most editors)
@@ -303,10 +305,10 @@ export function applyFix(
         );
       }
 
-      // Verify the fix applied. If not, use direct DOM manipulation as final fallback.
+      // Verify the fix applied. If text hasn't changed at all, use DOM fallback.
       setTimeout(() => {
-        const currentText = element.innerText;
-        if (currentText.includes(error.original)) {
+        const textAfter = element.innerText;
+        if (textAfter === textBefore) {
           console.log("[AI Grammar Checker] execCommand failed, using DOM fallback");
           directDomReplace(element, error.original, error.suggestion);
         }
