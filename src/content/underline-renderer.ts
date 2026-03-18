@@ -1,6 +1,11 @@
 import { GrammarError } from "../shared/types.js";
 import { getOrCreateContainer, getShadowRoot } from "./shadow-host.js";
 import { showPopover, showPopoverOnHover } from "./popover.js";
+import {
+  buildContentEditableSnapshot,
+  getContentEditableRangeForError,
+  getContentEditableRange,
+} from "./contenteditable-snapshot.js";
 
 const elementContainerMap = new WeakMap<HTMLElement, string>();
 let containerCounter = 0;
@@ -228,10 +233,10 @@ function renderForContentEditable(
   const container = getOrCreateContainer(containerId);
   container.innerHTML = "";
 
-  const text = element.innerText;
+  const snapshot = buildContentEditableSnapshot(element);
 
   for (const error of errors) {
-    const rects = getErrorClientRects(element, error);
+    const rects = getErrorClientRects(element, error, snapshot);
     for (const r of rects) {
       const underline = createUnderline(error, r);
       attachUnderlineListeners(underline, error, r, element, onAccept, onDismiss);
@@ -253,13 +258,17 @@ function createUnderline(error: GrammarError, rect: DOMRect): HTMLElement {
   return underline;
 }
 
-function getErrorClientRects(root: HTMLElement, error: GrammarError): DOMRect[] {
-  const range = plainTextToRange(root, error.offset, error.length);
+function getErrorClientRects(
+  root: HTMLElement,
+  error: GrammarError,
+  snapshot = buildContentEditableSnapshot(root)
+): DOMRect[] {
+  const range = getContentEditableRangeForError(root, error, snapshot);
   if (range) {
     return Array.from(range.getClientRects()).filter((rect) => rect.width > 0 || rect.height > 0);
   }
 
-  const insertionRect = getContentEditableInsertionRect(root, error.offset);
+  const insertionRect = getContentEditableInsertionRect(snapshot, error.offset);
   return insertionRect ? [insertionRect] : [];
 }
 
@@ -287,67 +296,17 @@ function getInputInsertionAnchorRect(measurer: HTMLElement, offset: number, fall
   return new DOMRect(fallbackRect.right - 8, fallbackRect.bottom - 20, 8, 16);
 }
 
-function getContentEditableInsertionRect(root: HTMLElement, offset: number): DOMRect | null {
-  const range = plainTextToRange(root, offset, 0);
+function getContentEditableInsertionRect(
+  snapshot: ReturnType<typeof buildContentEditableSnapshot>,
+  offset: number
+): DOMRect | null {
+  const range = getContentEditableRange(snapshot, offset, 0);
   if (!range) return null;
   const rect = range.getBoundingClientRect();
   if (rect.width > 0 || rect.height > 0) {
     return rect;
   }
   return new DOMRect(rect.left, rect.top, 8, 16);
-}
-
-function plainTextToRange(
-  root: HTMLElement,
-  offset: number,
-  length: number
-): Range | null {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let charCount = 0;
-  let startNode: Text | null = null;
-  let startOffset = 0;
-  let endNode: Text | null = null;
-  let endOffset = 0;
-
-  while (walker.nextNode()) {
-    const node = walker.currentNode as Text;
-    const nodeLen = node.textContent?.length || 0;
-
-    if (!startNode && (charCount + nodeLen > offset || (length === 0 && charCount + nodeLen >= offset))) {
-      startNode = node;
-      startOffset = offset - charCount;
-    }
-
-    if (startNode && charCount + nodeLen >= offset + length) {
-      endNode = node;
-      endOffset = offset + length - charCount;
-      break;
-    }
-
-    charCount += nodeLen;
-  }
-
-  if (length === 0) {
-    if (!startNode) {
-      if (root.lastChild instanceof Text) {
-        startNode = root.lastChild;
-        startOffset = startNode.textContent?.length || 0;
-      } else {
-        return null;
-      }
-    }
-    const range = document.createRange();
-    range.setStart(startNode, startOffset);
-    range.collapse(true);
-    return range;
-  }
-
-  if (!startNode || !endNode) return null;
-
-  const range = document.createRange();
-  range.setStart(startNode, startOffset);
-  range.setEnd(endNode, endOffset);
-  return range;
 }
 
 function escapeHtml(str: string): string {

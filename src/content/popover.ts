@@ -3,6 +3,11 @@ import { getShadowRoot, getShadowHost } from "./shadow-host.js";
 import { isDarkMode } from "./dark-mode.js";
 import { clearErrors, clearAllErrors } from "./underline-renderer.js";
 import { trackAppliedFix } from "./text-monitor.js";
+import {
+  buildContentEditableSnapshot,
+  getContentEditableText,
+  getContentEditableRangeForError,
+} from "./contenteditable-snapshot.js";
 
 let currentPopover: HTMLElement | null = null;
 let closeHandler: ((e: Event) => void) | null = null;
@@ -290,7 +295,7 @@ export function applyFix(
     element.dispatchEvent(new Event("input", { bubbles: true }));
   } else if (element.isContentEditable) {
     // Capture text before fix for verification
-    const textBefore = element.innerText;
+    const textBefore = getContentEditableText(element);
     const selectionSet = setContentEditableSelection(element, error);
     if (selectionSet) {
       // Try execCommand directly first (works in isolated world for most editors)
@@ -311,7 +316,7 @@ export function applyFix(
 
       // Verify the fix applied. If text hasn't changed at all, use DOM fallback.
       setTimeout(() => {
-        const textAfter = element.innerText;
+        const textAfter = getContentEditableText(element);
         if (textAfter === textBefore) {
           console.log("[AI Grammar Checker] execCommand failed, using DOM fallback");
           directDomReplace(element, error.original, error.suggestion, error.offset);
@@ -328,48 +333,15 @@ function setContentEditableSelection(
   element: HTMLElement,
   error: GrammarError
 ): boolean {
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-  const nodes: { node: Text; start: number }[] = [];
-  let full = "";
-  while (walker.nextNode()) {
-    const n = walker.currentNode as Text;
-    nodes.push({ node: n, start: full.length });
-    full += n.textContent || "";
-  }
+  const range = getContentEditableRangeForError(element, error);
+  if (!range) return false;
 
-  const idx = error.length === 0 ? error.offset : full.indexOf(error.original);
-  if (idx === -1) return false;
+  const sel = window.getSelection();
+  if (!sel) return false;
 
-  let startNode: Text | null = null,
-    startOffset = 0,
-    endNode: Text | null = null,
-    endOffset = 0;
-
-  for (const entry of nodes) {
-    const nodeEnd = entry.start + (entry.node.textContent?.length || 0);
-    if (!startNode && nodeEnd > idx) {
-      startNode = entry.node;
-      startOffset = idx - entry.start;
-    }
-    if (startNode && nodeEnd >= idx + error.original.length) {
-      endNode = entry.node;
-      endOffset = idx + error.original.length - entry.start;
-      break;
-    }
-  }
-
-  if (startNode && endNode) {
-    const range = document.createRange();
-    range.setStart(startNode, startOffset);
-    range.setEnd(endNode, endOffset);
-    const sel = window.getSelection();
-    if (sel) {
-      sel.removeAllRanges();
-      sel.addRange(range);
-      return true;
-    }
-  }
-  return false;
+  sel.removeAllRanges();
+  sel.addRange(range);
+  return true;
 }
 
 /**
@@ -378,82 +350,29 @@ function setContentEditableSelection(
  * Dispatches InputEvent to notify rich-text editors (Quill, etc.) of the change.
  */
 function directDomReplace(element: HTMLElement, original: string, replacement: string, offset: number = -1): void {
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-  let accumulated = "";
-  const nodes: { node: Text; start: number }[] = [];
+  const snapshot = buildContentEditableSnapshot(element);
+  const range = getContentEditableRangeForError(
+    element,
+    {
+      original,
+      suggestion: replacement,
+      offset,
+      length: original.length,
+      type: "grammar",
+      explanation: "",
+    },
+    snapshot
+  );
+  if (!range) return;
 
-  while (walker.nextNode()) {
-    const n = walker.currentNode as Text;
-    nodes.push({ node: n, start: accumulated.length });
-    accumulated += n.textContent || "";
-  }
+  range.deleteContents();
+  const textNode = document.createTextNode(replacement);
+  range.insertNode(textNode);
 
-  const idx = original.length === 0
-    ? (offset >= 0 ? Math.min(offset, accumulated.length) : accumulated.length)
-    : accumulated.indexOf(original);
-  if (idx === -1) return;
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.collapse(textNode, replacement.length);
 
-  if (original.length === 0) {
-    const range = document.createRange();
-    const selection = window.getSelection();
-    for (const entry of nodes) {
-      const nodeText = entry.node.textContent || "";
-      const nodeEnd = entry.start + nodeText.length;
-      if (nodeEnd < idx) continue;
-      range.setStart(entry.node, Math.max(0, idx - entry.start));
-      range.collapse(true);
-      const textNode = document.createTextNode(replacement);
-      range.insertNode(textNode);
-      selection?.removeAllRanges();
-      selection?.collapse(textNode, replacement.length);
-      element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: replacement }));
-      return;
-    }
-
-    element.appendChild(document.createTextNode(replacement));
-    element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: replacement }));
-    return;
-  }
-
-  // Find the start and end text nodes
-  for (const entry of nodes) {
-    const nodeText = entry.node.textContent || "";
-    const nodeEnd = entry.start + nodeText.length;
-
-    if (nodeEnd <= idx) continue;
-
-    // This node contains the start of the match
-    const localStart = idx - entry.start;
-    const localEnd = Math.min(nodeText.length, localStart + original.length);
-    const remaining = original.length - (localEnd - localStart);
-
-    if (remaining <= 0) {
-      // Entire match is within this single text node
-      entry.node.textContent =
-        nodeText.substring(0, localStart) +
-        replacement +
-        nodeText.substring(localStart + original.length);
-    } else {
-      // Match spans multiple nodes — replace in first node and remove from subsequent
-      entry.node.textContent = nodeText.substring(0, localStart) + replacement;
-      let toRemove = remaining;
-      for (const next of nodes) {
-        if (next.start <= entry.start) continue;
-        if (toRemove <= 0) break;
-        const nextText = next.node.textContent || "";
-        if (nextText.length <= toRemove) {
-          toRemove -= nextText.length;
-          next.node.textContent = "";
-        } else {
-          next.node.textContent = nextText.substring(toRemove);
-          toRemove = 0;
-        }
-      }
-    }
-    break;
-  }
-
-  // Dispatch InputEvent to notify rich-text editors of the change
   element.dispatchEvent(new InputEvent("input", {
     bubbles: true,
     inputType: "insertText",

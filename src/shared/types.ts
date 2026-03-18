@@ -40,6 +40,7 @@ export interface UserSettings {
 
 export interface ElementState {
   lastText: string;
+  pendingText: string | null;
   errors: GrammarError[];
   correctedText?: string;
   ignoredErrors: Set<string>;

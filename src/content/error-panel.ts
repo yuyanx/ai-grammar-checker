@@ -4,6 +4,7 @@ import { isDarkMode } from "./dark-mode.js";
 import { applyFix, escapeHtml, hidePopover } from "./popover.js";
 import { errorKey } from "./underline-renderer.js";
 import { trackAppliedFix } from "./text-monitor.js";
+import { getContentEditableText } from "./contenteditable-snapshot.js";
 
 let currentPanel: HTMLElement | null = null;
 let currentElement: HTMLElement | null = null;
@@ -275,7 +276,7 @@ function applyAllFixes(
     element.dispatchEvent(new Event("input", { bubbles: true }));
   } else if (element.isContentEditable) {
     element.focus();
-    const textBefore = element.innerText;
+    const textBefore = getContentEditableText(element);
 
     // Try correctedText full replacement first, then fall back to sequential fixes
     const fallbackToSequential = () => {
@@ -308,7 +309,7 @@ function applyAllFixes(
 
         // Verify: if text hasn't changed, fall back to sequential individual fixes
         setTimeout(() => {
-          const textAfter = element.innerText;
+          const textAfter = getContentEditableText(element);
           if (textAfter === textBefore) {
             fallbackToSequential();
           }

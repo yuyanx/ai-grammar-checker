@@ -1,9 +1,10 @@
 import { GrammarError, CheckRequest, CheckResponse, ElementState } from "../shared/types.js";
 import { getSettings, isConfigured } from "../shared/storage.js";
 import { renderErrors, clearErrors, clearAllErrors, errorKey } from "./underline-renderer.js";
-import { updateWidget, removeWidget, removeAllWidgets } from "./status-widget.js";
+import { updateWidget, removeWidget, removeAllWidgets, refreshWidget } from "./status-widget.js";
 import { showPopover } from "./popover.js";
 import { showErrorPanel, hideErrorPanel } from "./error-panel.js";
+import { getContentEditableText } from "./contenteditable-snapshot.js";
 
 const elementStates = new WeakMap<HTMLElement, ElementState>();
 const trackedElements = new Set<HTMLElement>();
@@ -77,7 +78,7 @@ function getElementText(element: HTMLElement): string {
   if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
     return element.value;
   }
-  return element.innerText;
+  return getContentEditableText(element);
 }
 
 /**
@@ -194,6 +195,9 @@ export async function startMonitoring(): Promise<void> {
     rafId = requestAnimationFrame(() => {
       rafId = null;
       reRenderAll();
+      for (const el of trackedElements) {
+        refreshWidget(el);
+      }
     });
   };
 
@@ -312,6 +316,7 @@ function attachListeners(element: HTMLElement): void {
   const sourceId = getSourceId(element);
   const state: ElementState = {
     lastText: "",
+    pendingText: null,
     errors: [],
     ignoredErrors: new Set(),
     debounceTimer: null,
@@ -429,9 +434,9 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
 
   // Skip unchanged text (normalized comparison to avoid spurious rechecks
   // from contenteditable editors that add/remove trailing whitespace)
-  if (text === state.lastText) return;
+  if (text === state.lastText || text === state.pendingText) return;
 
-  state.lastText = text;
+  state.pendingText = text;
 
   // Show checking widget
   console.log("[AI Grammar Checker] Checking text:", text.substring(0, 50) + (text.length > 50 ? "..." : ""));
@@ -450,6 +455,9 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
     const response: CheckResponse = await chrome.runtime.sendMessage(request);
 
     if (response.error) {
+      if (state.pendingText === text) {
+        state.pendingText = null;
+      }
       console.log("[AI Grammar Checker] API error:", response.error);
       updateWidget(element, "idle");
       return;
@@ -461,9 +469,17 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
     const currentText = normalizeText(getElementText(element));
 
     if (currentText !== text) {
+      if (state.pendingText === text) {
+        state.pendingText = null;
+      }
       console.log("[AI Grammar Checker] Text changed during check, discarding result");
       updateWidget(element, "idle");
       return;
+    }
+
+    state.lastText = text;
+    if (state.pendingText === text) {
+      state.pendingText = null;
     }
 
     // Filter out errors that would reverse a recently applied fix (prevents oscillation)
@@ -492,6 +508,9 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
 
     renderErrorsForElement(element);
   } catch (err: any) {
+    if (state.pendingText === text) {
+      state.pendingText = null;
+    }
     if (err?.message?.includes("Extension context invalidated")) return;
     console.warn("[AI Grammar Checker] Error:", err);
     updateWidget(element, "idle");

@@ -303,8 +303,17 @@ export const CONTENT_CSS = `
     border-width: 1.5px;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
   }
+  .grammar-widget.grammar-widget--compact-dot {
+    width: 12px;
+    height: 12px;
+    border-width: 2px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  }
   .grammar-widget--compact .grammar-widget__count {
     font-size: 9px;
+  }
+  .grammar-widget--compact-dot .grammar-widget__count {
+    display: none;
   }
   .grammar-widget--compact .grammar-widget__check {
     font-size: 10px;
@@ -312,6 +321,9 @@ export const CONTENT_CSS = `
   .grammar-widget--compact .grammar-widget__spinner {
     width: 10px;
     height: 10px;
+  }
+  .grammar-widget--compact-dot .grammar-widget__tooltip {
+    margin-bottom: 8px;
   }
 
   /* Widget tooltip on hover */

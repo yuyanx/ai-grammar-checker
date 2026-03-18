@@ -1,28 +1,32 @@
 # Handoff Notes
 
 ## Branch
-`work`
+`claude/angry-wu-k70YE`
 
 ## Build
 ```bash
-npm install
 npm run build
 ```
 Load `dist/` as unpacked extension in Chrome.
 
 ## Current State
-- Latest commit: `494e8ca` — Handle zero-length insertions, per-editor request scoping & caching; build and version updates
-- Current package/manifest version: `1.5.4`
-- In this container, local dependencies are not installed, so `npm run build` fails fast because `./node_modules/.bin/esbuild` is missing
-- In this container, `npx tsc --noEmit` also fails because the `chrome` type definitions are not installed locally
+- Current package/manifest version: `1.6.5`
+- `npm run build` passes locally
+- Instagram compact badge placement is now explicitly anchored to visible action labels like `Post`, with a hard left-side safety gap to avoid overlap
+- Compact error dots are reduced to `12px` for crowded editors
+- Verified with a rendered local fixture using the real widget code:
+  - Fixture: `/tmp/ig-widget-test/index.html`
+  - Screenshot: `/tmp/ig-widget-test/result.png`
+  - Result: `PASS gap=16px widget=694-710 post=726-764`
+- `AGENTS.md` is still untracked locally and should stay out of the commit unless explicitly requested
 
 ## Recent Changes (newest first)
-1. **Zero-length insertion support** — parser, renderer, and fix-application paths now handle insertion-style suggestions such as missing punctuation
-2. **Per-editor request scoping** — grammar requests are scoped by tab/frame/editor source ID to avoid unrelated aborts and cross-editor races
-3. **Observer cleanup** — tracked editor observers/timers are cleaned up when editors are removed or during SPA navigation cleanup
-4. **Cache improvements** — response caching now accounts for provider/settings/prompt version and refreshes entries on read for LRU-like behavior
-5. **Safer build script** — `build.sh` now expects the pinned local `node_modules/.bin/esbuild` binary instead of using `npx` to fetch tooling
-6. **Settings test restore** — the options page restores prior settings after running “Test Connection”
+1. **Instagram compact badge fix** — `status-widget.ts` now explicitly detects visible action labels such as `Post`, `Comment`, `Reply`, and `Send` and anchors the compact dot to the left of that label with a hard safety gap
+2. **Compact badge sizing/placement cleanup** — compact error dots are now `12px`, and compact placement uses rendered text bounds instead of the full contenteditable box
+3. **Rendered obstacle detection fix** — right-side action text in shared wrappers is now treated as occupied space instead of being filtered out
+4. **Contenteditable offset integrity** — added a shared visible-text snapshot/mapping utility so multiline rich-text editors, duplicate words, and fix application all use the same offsets
+5. **Retry-state fix** — unchanged text is retryable after transient API failures instead of being stuck until the user types again
+6. **Version/changelog updates** — package/manifest/changelog were updated through `1.6.5`
 
 ## Architecture
 
@@ -60,15 +64,18 @@ Load `dist/` as unpacked extension in Chrome.
 - Background worker maintains a scoped in-flight abort map and an in-memory response cache
 
 ## Known Issues / Potential Work
-- This container currently lacks installed dependencies, so build/typecheck cannot complete without `npm install`
 - No automated unit/integration tests exist yet
 - Error detection quality still depends heavily on prompt tuning (`src/shared/prompts.ts`)
 - Large text inputs may still be slow because the full normalized text is sent to the API each time
+- Instagram placement is verified on a local fixture, but live-page DOM inspection in Safari is limited because `do JavaScript` from Apple Events is disabled on this machine
 
 ## Commands Run In This Session
 ```bash
-git log --oneline --decorate -n 8
 git status --short --branch
 npm run build
-npx tsc --noEmit
+osascript -e 'tell application "Safari" to count windows'
+osascript -e 'tell application "Safari" to get URL of current tab of front window'
+./node_modules/.bin/esbuild /tmp/ig-widget-test/entry.ts --bundle --format=iife --outfile=/tmp/ig-widget-test/entry.js
+'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless=new --disable-gpu --virtual-time-budget=4000 --dump-dom file:///tmp/ig-widget-test/index.html
+'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless=new --disable-gpu --hide-scrollbars --window-size=900,400 --virtual-time-budget=4000 --screenshot=/tmp/ig-widget-test/result.png file:///tmp/ig-widget-test/index.html
 ```
