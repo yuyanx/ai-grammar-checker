@@ -82,7 +82,13 @@ export function validateErrors(
       originalText.substring(offset, offset + length) === err.original
     ) {
       // Skip if the suggestion is already applied at this position
-      if (originalText.substring(offset, offset + err.suggestion.length) === err.suggestion) {
+      // (e.g. "doing" → "doing?" when text already has "doing?")
+      // Only skip when the suggestion is longer than the original (insertion/append),
+      // to avoid false positives like "your" starts with "you"
+      if (
+        err.suggestion.length > err.original.length &&
+        originalText.substring(offset, offset + err.suggestion.length) === err.suggestion
+      ) {
         continue;
       }
       const key = `${offset}:${length}`;
@@ -107,7 +113,10 @@ export function validateErrors(
       const foundIndex = originalText.indexOf(err.original, searchFrom);
       if (foundIndex < 0) break;
       // Skip if the suggestion is already applied at this position
-      if (originalText.substring(foundIndex, foundIndex + err.suggestion.length) === err.suggestion) {
+      if (
+        err.suggestion.length > err.original.length &&
+        originalText.substring(foundIndex, foundIndex + err.suggestion.length) === err.suggestion
+      ) {
         searchFrom = foundIndex + 1;
         continue;
       }
