@@ -188,7 +188,6 @@ async function callOpenAI(
         { role: "user", content: user },
       ],
       temperature: 0,
-      max_tokens: 1024,
       response_format: { type: "json_object" },
     }),
   });
@@ -226,6 +225,7 @@ async function callGemini(
       ],
       generationConfig: {
         temperature: 0,
+        maxOutputTokens: 1024,
         responseMimeType: "application/json",
         responseSchema: {
           type: "object",
