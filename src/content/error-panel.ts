@@ -366,7 +366,7 @@ function positionPanel(panel: HTMLElement, elementRect: DOMRect): void {
 
 function animateHidePanel(): void {
   if (!currentPanel) return;
-  console.log("[AI Grammar Checker] animateHidePanel called", new Error().stack);
+  console.log("[AI Grammar Checker] animateHidePanel called");
   const panel = currentPanel;
   panel.classList.add("grammar-error-panel--closing");
   cleanupListeners();
