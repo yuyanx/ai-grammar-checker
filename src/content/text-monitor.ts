@@ -116,11 +116,27 @@ function attachListeners(element: HTMLElement): void {
     const currentState = elementStates.get(element);
     if (!currentState) return;
 
-    // Immediately clear stale underlines and badge when text changes
+    // Always clear stale underlines and badge immediately when text changes
+    clearErrors(element);
     if (currentState.errors.length > 0) {
       currentState.errors = [];
-      clearErrors(element);
       updateWidget(element, "idle");
+    }
+
+    // Get current text to check if it's now empty
+    const currentText = element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+      ? element.value
+      : element.innerText;
+
+    if (!currentText.trim() || currentText.trim().length < 10) {
+      // Text is empty or too short — clear everything and don't schedule a check
+      currentState.lastText = "";
+      if (currentState.debounceTimer !== null) {
+        clearTimeout(currentState.debounceTimer);
+        currentState.debounceTimer = null;
+      }
+      updateWidget(element, "idle");
+      return;
     }
 
     if (currentState.debounceTimer !== null) {
@@ -132,7 +148,15 @@ function attachListeners(element: HTMLElement): void {
     }, debounceMs);
   };
 
+  // Listen for multiple events to catch all text changes (including programmatic ones)
   element.addEventListener("input", handler);
+  element.addEventListener("keyup", handler);
+
+  // For contenteditable, also watch for DOM mutations
+  if (element.isContentEditable) {
+    const observer = new MutationObserver(() => handler());
+    observer.observe(element, { childList: true, subtree: true, characterData: true });
+  }
 }
 
 async function checkElement(element: HTMLElement, autoShowPanel = false): Promise<void> {

@@ -7,6 +7,28 @@ import { OPENAI_API_URL, GEMINI_API_URL, DEFAULT_OPENAI_MODEL, MAX_TEXT_LENGTH }
 // Rate limit state lives here in the service worker — persists across all tabs/page loads
 let rateLimitedUntil = 0;
 
+// Cached settings to avoid repeated chrome.storage reads on every check
+let cachedSettings: Awaited<ReturnType<typeof getSettings>> | null = null;
+let settingsCacheTime = 0;
+const SETTINGS_CACHE_TTL = 30_000; // 30 seconds
+
+async function getCachedSettings() {
+  if (cachedSettings && Date.now() - settingsCacheTime < SETTINGS_CACHE_TTL) {
+    return cachedSettings;
+  }
+  cachedSettings = await getSettings();
+  settingsCacheTime = Date.now();
+  return cachedSettings;
+}
+
+// Invalidate settings cache when settings change
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.settings) {
+    cachedSettings = null;
+    settingsCacheTime = 0;
+  }
+});
+
 // Simple LRU cache for recent checks (text → errors + correctedText)
 const responseCache = new Map<string, { errors: GrammarError[]; correctedText?: string; timestamp: number }>();
 const CACHE_TTL = 60_000; // 1 minute
@@ -78,7 +100,7 @@ chrome.runtime.onMessage.addListener(
 async function handleCheckGrammar(
   request: CheckRequest
 ): Promise<CheckResponse> {
-  const settings = await getSettings();
+  const settings = await getCachedSettings();
   const text = request.text.substring(0, MAX_TEXT_LENGTH);
 
   // Check cache first
@@ -165,7 +187,8 @@ async function callOpenAI(
         { role: "system", content: system },
         { role: "user", content: user },
       ],
-      temperature: 0.1,
+      temperature: 0,
+      max_tokens: 1024,
       response_format: { type: "json_object" },
     }),
   });

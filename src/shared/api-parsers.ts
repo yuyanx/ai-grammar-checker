@@ -57,15 +57,19 @@ export function validateErrors(
   originalText: string
 ): GrammarError[] {
   const validated: GrammarError[] = [];
+  const usedOffsets = new Set<string>();
 
   for (const err of errors) {
     if (
-      !err.original ||
       !err.suggestion ||
-      err.original === err.suggestion ||
       typeof err.type !== "string" ||
       !["grammar", "spelling", "punctuation"].includes(err.type)
     ) {
+      continue;
+    }
+
+    // Handle missing-punctuation insertion errors (empty original)
+    if (!err.original || err.original === err.suggestion) {
       continue;
     }
 
@@ -77,28 +81,41 @@ export function validateErrors(
       offset >= 0 &&
       originalText.substring(offset, offset + length) === err.original
     ) {
-      validated.push({
-        original: err.original,
-        suggestion: err.suggestion,
-        offset,
-        length,
-        type: err.type,
-        explanation: err.explanation || "",
-      });
+      const key = `${offset}:${length}`;
+      if (!usedOffsets.has(key)) {
+        usedOffsets.add(key);
+        validated.push({
+          original: err.original,
+          suggestion: err.suggestion,
+          offset,
+          length,
+          type: err.type,
+          explanation: err.explanation || "",
+        });
+      }
       continue;
     }
 
-    // Fallback: find by indexOf
-    const foundIndex = originalText.indexOf(err.original);
-    if (foundIndex >= 0) {
-      validated.push({
-        original: err.original,
-        suggestion: err.suggestion,
-        offset: foundIndex,
-        length,
-        type: err.type,
-        explanation: err.explanation || "",
-      });
+    // Fallback: find by indexOf (try all occurrences to avoid duplicates)
+    let searchFrom = 0;
+    let found = false;
+    while (!found) {
+      const foundIndex = originalText.indexOf(err.original, searchFrom);
+      if (foundIndex < 0) break;
+      const key = `${foundIndex}:${length}`;
+      if (!usedOffsets.has(key)) {
+        usedOffsets.add(key);
+        validated.push({
+          original: err.original,
+          suggestion: err.suggestion,
+          offset: foundIndex,
+          length,
+          type: err.type,
+          explanation: err.explanation || "",
+        });
+        found = true;
+      }
+      searchFrom = foundIndex + 1;
     }
     // If neither works, silently drop this error
   }

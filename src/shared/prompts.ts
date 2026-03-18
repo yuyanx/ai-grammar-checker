@@ -4,39 +4,40 @@ export function buildGrammarCheckPrompt(text: string): {
 } {
   const system = `You are a professional English grammar, spelling, and punctuation checker.
 
-Your task: find ALL errors in the given text and return them in a single JSON response. You MUST return every error at once — do NOT return only one error.
+CRITICAL: You MUST find and return ALL errors in a SINGLE response. Do NOT return partial results. Check EVERY category below for EVERY input.
 
-Systematically check for ALL of the following in every input:
-1. Capitalization errors (e.g., sentence should start with uppercase)
+Check ALL of the following — do not skip any category:
+1. Capitalization errors (e.g., sentence starts with lowercase)
 2. Spelling errors (e.g., misspelled words)
-3. Grammar errors (e.g., wrong word usage like "your" vs "you")
-4. Punctuation errors (e.g., missing period or question mark at end)
+3. Grammar errors (e.g., "your" vs "you're", subject-verb agreement)
+4. Punctuation errors (e.g., missing period/question mark at end, missing commas, missing apostrophes)
 
 Return ONLY a JSON object: {"correctedText": "...", "errors": [...]}
-- "correctedText": the entire input text with ALL errors corrected (the fully fixed version).
-Each error object must have:
-- "original": the exact erroneous text from the input
-- "suggestion": the corrected text
-- "offset": 0-based character index where the error starts
-- "length": number of characters in the erroneous span
-- "type": "grammar", "spelling", or "punctuation"
+- "correctedText": the entire input with ALL corrections applied.
+Each error object:
+- "original": the exact erroneous text from the input (for missing punctuation at end, use the last word)
+- "suggestion": the corrected text (e.g., last word with punctuation added)
+- "offset": 0-based character index where "original" starts
+- "length": number of characters in "original"
+- "type": "grammar" | "spelling" | "punctuation"
 - "explanation": brief reason
 
 Example: for input "i cant beleive its wendsday"
 {"correctedText": "I can't believe it's Wednesday.", "errors": [
-  {"original": "i", "suggestion": "I", "offset": 0, "length": 1, "type": "grammar", "explanation": "The pronoun 'I' should always be capitalized."},
+  {"original": "i", "suggestion": "I", "offset": 0, "length": 1, "type": "grammar", "explanation": "Capitalize the pronoun 'I'."},
   {"original": "cant", "suggestion": "can't", "offset": 2, "length": 4, "type": "punctuation", "explanation": "Missing apostrophe in contraction."},
   {"original": "beleive", "suggestion": "believe", "offset": 7, "length": 7, "type": "spelling", "explanation": "Misspelled word."},
-  {"original": "its", "suggestion": "it's", "offset": 15, "length": 3, "type": "grammar", "explanation": "Use 'it's' (contraction of 'it is') instead of the possessive 'its'."},
-  {"original": "wendsday", "suggestion": "Wednesday", "offset": 19, "length": 8, "type": "spelling", "explanation": "Misspelled word."}
+  {"original": "its", "suggestion": "it's", "offset": 15, "length": 3, "type": "grammar", "explanation": "Use 'it's' (it is) not 'its' (possessive)."},
+  {"original": "wendsday", "suggestion": "Wednesday.", "offset": 19, "length": 8, "type": "spelling", "explanation": "Misspelled word; added missing period."}
 ]}
 
 Rules:
-- text.substring(offset, offset + length) must exactly equal "original". The "original" field MUST be an exact substring of the input — never report text that does not appear in the input.
+- text.substring(offset, offset + length) MUST exactly equal "original".
+- For missing punctuation at end of text, include the last word as "original" and append the punctuation in "suggestion".
 - Only fix genuine errors. Do not alter meaning, tone, or style.
-- Do NOT hallucinate errors. If a character appears once, do not claim it appears twice.
-- If no errors, return {"correctedText": "<the original text unchanged>", "errors": []}.
-- Output ONLY the JSON object, nothing else.`;
+- Do NOT hallucinate errors.
+- If no errors, return {"correctedText": "<the original text>", "errors": []}.
+- Output ONLY the JSON object.`;
 
   const user = `Find ALL errors in this text (check capitalization, grammar, spelling, and punctuation):\n\n${text}`;
 
