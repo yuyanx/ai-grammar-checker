@@ -1,9 +1,13 @@
 {
   "manifest_version": 3,
   "name": "AI Grammar Checker",
-  "version": "1.5.1",
+  "version": "1.5.4",
   "description": "Grammar, spelling, and punctuation checker powered by your own OpenAI or Gemini API keys",
-  "permissions": ["storage", "activeTab", "scripting"],
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
   "host_permissions": [
     "https://api.openai.com/*",
     "https://generativelanguage.googleapis.com/*",
@@ -14,15 +18,23 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/index.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/index.js"
+      ],
       "css": [],
       "run_at": "document_idle",
       "all_frames": true
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/page-script.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/page-script.js"
+      ],
       "css": [],
       "run_at": "document_idle",
       "world": "MAIN",

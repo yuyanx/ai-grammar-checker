@@ -206,6 +206,14 @@ function renderForInput(
     }
   });
 
+  for (const error of errors) {
+    if (error.length !== 0) continue;
+    const anchorRect = getInputInsertionAnchorRect(measurer, error.offset, rect);
+    const underline = createUnderline(error, anchorRect);
+    attachUnderlineListeners(underline, error, anchorRect, element, onAccept, onDismiss);
+    container.appendChild(underline);
+  }
+
   // Cleanup measurer
   document.body.removeChild(measurer);
 }
@@ -223,24 +231,70 @@ function renderForContentEditable(
   const text = element.innerText;
 
   for (const error of errors) {
-    const range = plainTextToRange(element, error.offset, error.length);
-    if (!range) continue;
-
-    const rects = range.getClientRects();
-    for (let i = 0; i < rects.length; i++) {
-      const r = rects[i];
-      const underline = document.createElement("div");
-      underline.className = `grammar-underline grammar-underline--${error.type}`;
-      underline.style.position = "fixed";
-      underline.style.left = `${r.left}px`;
-      underline.style.top = `${r.bottom - 4}px`;
-      underline.style.width = `${r.width}px`;
-      underline.style.height = "4px";
-
+    const rects = getErrorClientRects(element, error);
+    for (const r of rects) {
+      const underline = createUnderline(error, r);
       attachUnderlineListeners(underline, error, r, element, onAccept, onDismiss);
       container.appendChild(underline);
     }
   }
+}
+
+function createUnderline(error: GrammarError, rect: DOMRect): HTMLElement {
+  const underline = document.createElement("div");
+  underline.className = `grammar-underline grammar-underline--${error.type}`;
+  underline.style.position = "fixed";
+  underline.style.left = `${rect.left}px`;
+  underline.style.top = `${rect.bottom - 4}px`;
+  underline.style.width = `${Math.max(rect.width, 8)}px`;
+  underline.style.height = "4px";
+  underline.style.pointerEvents = "auto";
+  underline.style.cursor = "pointer";
+  return underline;
+}
+
+function getErrorClientRects(root: HTMLElement, error: GrammarError): DOMRect[] {
+  const range = plainTextToRange(root, error.offset, error.length);
+  if (range) {
+    return Array.from(range.getClientRects()).filter((rect) => rect.width > 0 || rect.height > 0);
+  }
+
+  const insertionRect = getContentEditableInsertionRect(root, error.offset);
+  return insertionRect ? [insertionRect] : [];
+}
+
+function getInputInsertionAnchorRect(measurer: HTMLElement, offset: number, fallbackRect: DOMRect): DOMRect {
+  const range = document.createRange();
+  const walker = document.createTreeWalker(measurer, NodeFilter.SHOW_TEXT);
+  let chars = 0;
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    const text = node.textContent || "";
+    const nextChars = chars + text.length;
+    if (offset <= nextChars) {
+      range.setStart(node, Math.max(0, offset - chars));
+      range.collapse(true);
+      const rect = range.getBoundingClientRect();
+      if (rect.width > 0 || rect.height > 0) {
+        return rect;
+      }
+      return new DOMRect(rect.left, rect.top, 8, 16);
+    }
+    chars = nextChars;
+  }
+
+  return new DOMRect(fallbackRect.right - 8, fallbackRect.bottom - 20, 8, 16);
+}
+
+function getContentEditableInsertionRect(root: HTMLElement, offset: number): DOMRect | null {
+  const range = plainTextToRange(root, offset, 0);
+  if (!range) return null;
+  const rect = range.getBoundingClientRect();
+  if (rect.width > 0 || rect.height > 0) {
+    return rect;
+  }
+  return new DOMRect(rect.left, rect.top, 8, 16);
 }
 
 function plainTextToRange(
@@ -259,7 +313,7 @@ function plainTextToRange(
     const node = walker.currentNode as Text;
     const nodeLen = node.textContent?.length || 0;
 
-    if (!startNode && charCount + nodeLen > offset) {
+    if (!startNode && (charCount + nodeLen > offset || (length === 0 && charCount + nodeLen >= offset))) {
       startNode = node;
       startOffset = offset - charCount;
     }
@@ -271,6 +325,21 @@ function plainTextToRange(
     }
 
     charCount += nodeLen;
+  }
+
+  if (length === 0) {
+    if (!startNode) {
+      if (root.lastChild instanceof Text) {
+        startNode = root.lastChild;
+        startOffset = startNode.textContent?.length || 0;
+      } else {
+        return null;
+      }
+    }
+    const range = document.createRange();
+    range.setStart(startNode, startOffset);
+    range.collapse(true);
+    return range;
   }
 
   if (!startNode || !endNode) return null;

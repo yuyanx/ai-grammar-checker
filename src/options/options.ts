@@ -70,6 +70,7 @@ async function testConnection(): Promise<void> {
   resultEl.textContent = "Testing...";
   resultEl.className = "test-result test-result--pending";
 
+  const previousSettings = await getSettings();
   const provider = getSelectedProvider();
   const key = provider === "openai"
     ? (document.getElementById("openaiKey") as HTMLInputElement).value
@@ -81,13 +82,13 @@ async function testConnection(): Promise<void> {
     return;
   }
 
-  // Save temporarily for the test
-  await saveSettings({
-    provider,
-    ...(provider === "openai" ? { openaiApiKey: key } : { geminiApiKey: key }),
-  });
-
   try {
+    // Save temporarily for the test
+    await saveSettings({
+      provider,
+      ...(provider === "openai" ? { openaiApiKey: key } : { geminiApiKey: key }),
+    });
+
     const response = await chrome.runtime.sendMessage({
       type: "CHECK_GRAMMAR",
       text: "This are a test sentense.",
@@ -107,6 +108,8 @@ async function testConnection(): Promise<void> {
   } catch (err) {
     resultEl.textContent = `Connection failed: ${err}`;
     resultEl.className = "test-result test-result--error";
+  } finally {
+    await saveSettings(previousSettings);
   }
 }
 

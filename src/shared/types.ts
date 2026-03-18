@@ -15,6 +15,7 @@ export interface CheckRequest {
   type: "CHECK_GRAMMAR";
   text: string;
   requestId: string;
+  sourceId?: string;
 }
 
 export interface CheckResponse {
@@ -43,4 +44,6 @@ export interface ElementState {
   correctedText?: string;
   ignoredErrors: Set<string>;
   debounceTimer: number | null;
+  sourceId: string;
+  observers: MutationObserver[];
 }
