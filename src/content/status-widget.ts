@@ -16,6 +16,7 @@ export function updateWidget(
   errorCount: number = 0,
   onClickErrors?: () => void
 ): void {
+  console.log("[AI Grammar Checker] updateWidget called, state:", state, "errorCount:", errorCount, "hasCallback:", !!onClickErrors);
   const containerId = getWidgetContainerId(element);
   const container = getOrCreateContainer(containerId);
   container.innerHTML = "";
