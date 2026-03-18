@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI Grammar Checker",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Grammar, spelling, and punctuation checker powered by your own OpenAI or Gemini API keys",
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": [

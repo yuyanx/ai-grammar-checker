@@ -298,9 +298,10 @@ export const CONTENT_CSS = `
 
   /* Compact widget for small editors (comment boxes) */
   .grammar-widget.grammar-widget--compact {
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
     border-width: 1.5px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
   }
   .grammar-widget--compact .grammar-widget__count {
     font-size: 9px;

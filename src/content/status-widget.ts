@@ -33,46 +33,42 @@ export function updateWidget(
 
   // Use smaller widget for compact editors (e.g. comment boxes)
   const isCompact = rect.height < 44;
-  const size = isCompact ? 22 : 28;
-  const margin = isCompact ? 3 : 6;
+  const size = isCompact ? 20 : 28;
+  const margin = isCompact ? 2 : 6;
 
-  // Position: bottom-right corner of the text field
+  // Position: for compact editors, vertically center and offset from right edge
+  // to avoid overlapping site buttons (send, emoji, etc.)
   widget.style.position = "fixed";
-  widget.style.top = `${rect.bottom - size - margin}px`;
-  widget.style.left = `${rect.right - size - margin}px`;
   if (isCompact) {
-    widget.classList.add("grammar-widget--compact");
+    widget.style.top = `${rect.top + (rect.height - size) / 2}px`;
+    widget.style.left = `${rect.right - size - 36}px`;
+  } else {
+    widget.style.top = `${rect.bottom - size - margin}px`;
+    widget.style.left = `${rect.right - size - margin}px`;
   }
 
+  // Build class name including compact modifier
+  const compactClass = isCompact ? " grammar-widget--compact" : "";
+
   if (state === "checking") {
-    widget.className = "grammar-widget grammar-widget--checking";
+    widget.className = `grammar-widget grammar-widget--checking${compactClass}`;
     widget.innerHTML = `
       <div class="grammar-widget__spinner"></div>
       <div class="grammar-widget__tooltip${dark ? " grammar-widget__tooltip--dark" : ""}">Checking...</div>
     `;
   } else if (state === "errors") {
-    widget.className = "grammar-widget grammar-widget--errors";
+    widget.className = `grammar-widget grammar-widget--errors${compactClass}`;
     widget.innerHTML = `
       <span class="grammar-widget__count">${errorCount > 9 ? "9+" : errorCount}</span>
       <div class="grammar-widget__tooltip${dark ? " grammar-widget__tooltip--dark" : ""}">${errorCount} issue${errorCount !== 1 ? "s" : ""} found</div>
     `;
-    console.log("[AI Grammar Checker] Widget created, onClickErrors:", !!onClickErrors);
-    widget.addEventListener("mousedown", (e) => {
-      console.log("[AI Grammar Checker] Widget mousedown");
-    });
     widget.addEventListener("click", (e) => {
-      console.log("[AI Grammar Checker] Widget clicked!");
       e.stopPropagation();
       e.preventDefault();
-      if (onClickErrors) {
-        console.log("[AI Grammar Checker] Calling onClickErrors");
-        onClickErrors();
-      } else {
-        console.log("[AI Grammar Checker] No onClickErrors callback");
-      }
+      if (onClickErrors) onClickErrors();
     });
   } else if (state === "clean") {
-    widget.className = "grammar-widget grammar-widget--clean";
+    widget.className = `grammar-widget grammar-widget--clean${compactClass}`;
     widget.innerHTML = `
       <span class="grammar-widget__check">\u2713</span>
       <div class="grammar-widget__tooltip${dark ? " grammar-widget__tooltip--dark" : ""}">No issues found</div>

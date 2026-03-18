@@ -276,6 +276,14 @@ function applyAllFixes(
   } else if (element.isContentEditable) {
     element.focus();
     const textBefore = element.innerText;
+
+    // Try correctedText full replacement first, then fall back to sequential fixes
+    const fallbackToSequential = () => {
+      console.log("[AI Grammar Checker] Fix All: falling back to sequential fixes");
+      const sorted = [...errors].sort((a, b) => b.offset - a.offset);
+      applyFixesSequentially(element, sorted, 0);
+    };
+
     if (correctedText) {
       // For contentEditable with correctedText: select all and replace
       const sel = window.getSelection();
@@ -298,29 +306,18 @@ function applyAllFixes(
           );
         }
 
-        // Verify: if text hasn't changed at all, use DOM fallback
+        // Verify: if text hasn't changed, fall back to sequential individual fixes
         setTimeout(() => {
           const textAfter = element.innerText;
           if (textAfter === textBefore) {
-            console.log("[AI Grammar Checker] Fix All: execCommand failed, using DOM fallback");
-            const firstChild = element.querySelector("p");
-            if (firstChild) {
-              firstChild.textContent = correctedText!;
-            } else {
-              element.textContent = correctedText!;
-            }
-            element.dispatchEvent(new InputEvent("input", {
-              bubbles: true,
-              inputType: "insertText",
-              data: correctedText!,
-            }));
+            fallbackToSequential();
           }
         }, 150);
+      } else {
+        fallbackToSequential();
       }
     } else {
-      // Fallback: apply fixes one by one in reverse offset order with small delays
-      const sorted = [...errors].sort((a, b) => b.offset - a.offset);
-      applyFixesSequentially(element, sorted, 0);
+      fallbackToSequential();
     }
   }
 }
