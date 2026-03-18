@@ -56,18 +56,28 @@ export async function startMonitoring(): Promise<void> {
   // Scan existing elements
   scanForElements(document.body);
 
-  // Watch for new elements
+  // Watch for new elements AND attribute changes (e.g. contenteditable set dynamically)
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
-      for (const node of mutation.addedNodes) {
-        if (node instanceof HTMLElement) {
-          scanForElements(node);
+      if (mutation.type === "childList") {
+        for (const node of mutation.addedNodes) {
+          if (node instanceof HTMLElement) {
+            scanForElements(node);
+          }
         }
+      } else if (mutation.type === "attributes" && mutation.target instanceof HTMLElement) {
+        // An element just got contenteditable set — scan it
+        scanForElements(mutation.target);
       }
     }
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["contenteditable", "role"],
+  });
 
   // Recalculate underline positions on scroll/resize
   let rafId: number | null = null;
