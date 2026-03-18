@@ -51,13 +51,21 @@ export function updateWidget(
       <span class="grammar-widget__count">${errorCount > 9 ? "9+" : errorCount}</span>
       <div class="grammar-widget__tooltip${dark ? " grammar-widget__tooltip--dark" : ""}">${errorCount} issue${errorCount !== 1 ? "s" : ""} found</div>
     `;
-    if (onClickErrors) {
-      widget.addEventListener("click", (e) => {
-        e.stopPropagation();
-        e.preventDefault();
+    console.log("[AI Grammar Checker] Widget created, onClickErrors:", !!onClickErrors);
+    widget.addEventListener("mousedown", (e) => {
+      console.log("[AI Grammar Checker] Widget mousedown");
+    });
+    widget.addEventListener("click", (e) => {
+      console.log("[AI Grammar Checker] Widget clicked!");
+      e.stopPropagation();
+      e.preventDefault();
+      if (onClickErrors) {
+        console.log("[AI Grammar Checker] Calling onClickErrors");
         onClickErrors();
-      });
-    }
+      } else {
+        console.log("[AI Grammar Checker] No onClickErrors callback");
+      }
+    });
   } else if (state === "clean") {
     widget.className = "grammar-widget grammar-widget--clean";
     widget.innerHTML = `
