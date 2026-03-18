@@ -46,12 +46,100 @@ const PRIVACY_SKIP_TYPES = new Set(["password", "hidden"]);
 const PRIVACY_SKIP_NAMES = /password|passwd|secret|token|ssn|credit.?card|cvv|cvc|api.?key/i;
 const PRIVACY_SKIP_AUTOCOMPLETE = /cc-|password|one-time-code/i;
 
+// Selectors for standard text inputs and contenteditable elements
+const TEXT_INPUT_SELECTORS = [
+  "textarea",
+  "input[type='text']",
+  "input[type='search']",
+  "input:not([type])",
+  "[contenteditable='true']",
+  "[contenteditable='']",
+  "[contenteditable='plaintext-only']",
+  "[role='textbox'][contenteditable]",
+  "[role='textbox']",
+].join(", ");
+
+/**
+ * Normalize text for comparison: trim trailing whitespace/newlines that
+ * contenteditable editors (LinkedIn, Medium, etc.) add inconsistently
+ * due to <br>, <p>, and other block-level element changes.
+ */
+function normalizeText(text: string): string {
+  return text.replace(/[\n\r\s]+$/, "");
+}
+
+/**
+ * Extract text from an element, normalizing for contenteditable quirks.
+ */
+function getElementText(element: HTMLElement): string {
+  if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+    return element.value;
+  }
+  return element.innerText;
+}
+
+/**
+ * Check if an element is actually editable (contenteditable, textarea, input, or role=textbox
+ * with visible text content that can be typed into).
+ */
+function isEditableElement(el: HTMLElement): boolean {
+  if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) return true;
+  if (el.isContentEditable) return true;
+  // role="textbox" elements may be custom editors without explicit contenteditable
+  if (el.getAttribute("role") === "textbox") return true;
+  return false;
+}
+
+/**
+ * Find the best editable element from a focusin target.
+ * Walks up the DOM to find the root editor element.
+ */
+function findEditableRoot(target: HTMLElement): HTMLElement | null {
+  // 1. Try matching our selectors directly (includes role=textbox)
+  const matched = target.closest<HTMLElement>(TEXT_INPUT_SELECTORS);
+  if (matched) {
+    // For contenteditable, walk up to find the outermost editable root
+    // so we attach to the editor container, not an inner <p> or <span>
+    if (matched.isContentEditable) {
+      let root = matched;
+      let parent = root.parentElement;
+      while (parent && parent !== document.body && parent.isContentEditable) {
+        if (parent.hasAttribute("contenteditable")) {
+          root = parent;
+        }
+        parent = parent.parentElement;
+      }
+      return root;
+    }
+    return matched;
+  }
+
+  // 2. Fallback: if target or ancestor is contenteditable but wasn't matched by selectors
+  if (target.isContentEditable) {
+    let el: HTMLElement = target;
+    let parent = el.parentElement;
+    while (parent && parent !== document.body && parent.isContentEditable) {
+      if (parent.hasAttribute("contenteditable")) {
+        el = parent;
+      }
+      parent = parent.parentElement;
+    }
+    return el;
+  }
+
+  return null;
+}
+
 export async function startMonitoring(): Promise<void> {
+  console.log("[AI Grammar Checker] startMonitoring called");
   const settings = await getSettings();
   debounceMs = settings.debounceMs;
   enabled = settings.enabled;
 
-  if (!enabled) return;
+  if (!enabled) {
+    console.log("[AI Grammar Checker] Extension disabled in settings");
+    return;
+  }
 
   // Scan existing elements
   scanForElements(document.body);
@@ -66,7 +154,7 @@ export async function startMonitoring(): Promise<void> {
           }
         }
       } else if (mutation.type === "attributes" && mutation.target instanceof HTMLElement) {
-        // An element just got contenteditable set — scan it
+        // An element just got contenteditable or role set — scan it
         scanForElements(mutation.target);
       }
     }
@@ -80,32 +168,17 @@ export async function startMonitoring(): Promise<void> {
   });
 
   // Catch text fields on focus — most reliable method for dynamically created editors
-  // (e.g. LinkedIn's Quill editor, Medium, Notion). When the user clicks into a field,
+  // (e.g. LinkedIn's editor, Medium, Notion). When the user clicks into a field,
   // we check if it's a text input we should attach to.
   document.addEventListener("focusin", (e) => {
     if (!enabled) return;
     const target = e.target;
     if (!(target instanceof HTMLElement)) return;
 
-    // Check the focused element itself, or walk up to find a contenteditable ancestor.
-    // For complex editors (LinkedIn, Notion), the focusin target may be a child element
-    // deep inside the contenteditable — walk up to find the outermost editable root.
-    let el = target.closest<HTMLElement>(TEXT_INPUT_SELECTORS);
-    if (!el && target.isContentEditable) {
-      // Walk up to find the highest contenteditable ancestor (the editor root),
-      // rather than attaching to an inner <p> or <span>.
-      el = target;
-      let parent = el.parentElement;
-      while (parent && parent !== document.body && parent.isContentEditable) {
-        // Prefer parent if it has an explicit contenteditable attribute
-        if (parent.hasAttribute("contenteditable")) {
-          el = parent;
-        }
-        parent = parent.parentElement;
-      }
-    }
+    const el = findEditableRoot(target);
     if (el && !elementStates.has(el)) {
       if (!shouldSkipElement(el)) {
+        console.log("[AI Grammar Checker] focusin detected editable:", el.tagName, el.className, el.getAttribute("contenteditable"), el.getAttribute("role"));
         attachListeners(el);
         trackedElements.add(el);
       }
@@ -125,7 +198,7 @@ export async function startMonitoring(): Promise<void> {
   window.addEventListener("scroll", recalculate, true);
   window.addEventListener("resize", recalculate);
 
-  // Periodically clean up disconnected elements (handles SPA navigation)
+  // Periodic maintenance: cleanup + rescan for missed editors
   setInterval(() => {
     // Detect URL change (SPA navigation) — nuclear cleanup
     if (location.href !== lastUrl) {
@@ -159,7 +232,12 @@ export async function startMonitoring(): Promise<void> {
         trackedElements.delete(el);
       }
     }
-  }, 1000);
+
+    // Periodic rescan: catch editors that might have been missed by MutationObserver/focusin.
+    // This is a safety net for complex SPAs (LinkedIn, etc.) where editors are created
+    // in ways that don't always trigger our detection.
+    scanForElements(document.body);
+  }, 2000);
 
   // Listen for settings changes
   chrome.storage.onChanged.addListener((changes) => {
@@ -180,27 +258,6 @@ export async function startMonitoring(): Promise<void> {
   });
 }
 
-const TEXT_INPUT_SELECTORS = "textarea, input[type='text'], input[type='search'], input:not([type]), [contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only'], [role='textbox'][contenteditable]";
-
-/**
- * Normalize text for comparison: trim trailing whitespace/newlines that
- * contenteditable editors (LinkedIn, Medium, etc.) add inconsistently
- * due to <br>, <p>, and other block-level element changes.
- */
-function normalizeText(text: string): string {
-  return text.replace(/[\n\r\s]+$/, "");
-}
-
-/**
- * Extract text from an element, normalizing for contenteditable quirks.
- */
-function getElementText(element: HTMLElement): string {
-  if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
-    return element.value;
-  }
-  return element.innerText;
-}
-
 function scanForElements(root: HTMLElement): void {
   const elements: HTMLElement[] = root.matches?.(TEXT_INPUT_SELECTORS) ? [root] : [];
   root.querySelectorAll<HTMLElement>(TEXT_INPUT_SELECTORS).forEach((el) => elements.push(el));
@@ -212,6 +269,8 @@ function scanForElements(root: HTMLElement): void {
     if (el instanceof HTMLElement && !elementStates.has(el)) {
       // Privacy check: skip sensitive fields
       if (shouldSkipElement(el)) continue;
+      // Skip non-editable elements (e.g. role=textbox that isn't actually editable)
+      if (!isEditableElement(el)) continue;
       attachListeners(el);
       trackedElements.add(el);
     }
@@ -314,17 +373,36 @@ function attachListeners(element: HTMLElement): void {
     });
     observer.observe(element, { childList: true, subtree: true, characterData: true });
   }
+
+  // For role="textbox" elements that are NOT contenteditable (custom editors),
+  // also set up a MutationObserver since they may not fire standard input events.
+  if (!element.isContentEditable && element.getAttribute("role") === "textbox") {
+    console.log("[AI Grammar Checker] Non-contenteditable textbox detected, adding mutation observer:", element.tagName, element.className);
+    let mutationPending = false;
+    const observer = new MutationObserver(() => {
+      if (!mutationPending) {
+        mutationPending = true;
+        queueMicrotask(() => {
+          mutationPending = false;
+          handler();
+        });
+      }
+    });
+    observer.observe(element, { childList: true, subtree: true, characterData: true });
+  }
 }
 
 async function checkElement(element: HTMLElement, autoShowPanel = false): Promise<void> {
   if (configuredCache === null) configuredCache = await isConfigured();
-  if (!configuredCache) return;
+  if (!configuredCache) {
+    console.log("[AI Grammar Checker] API key not configured, skipping check");
+    return;
+  }
 
   const state = elementStates.get(element);
   if (!state) return;
 
-  const rawText = getElementText(element);
-  const text = normalizeText(rawText);
+  const text = normalizeText(getElementText(element));
 
   // If text is empty or too short, clear existing errors and return
   if (!text.trim() || text.trim().length < 10) {
@@ -344,6 +422,7 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
   state.lastText = text;
 
   // Show checking widget
+  console.log("[AI Grammar Checker] Checking text:", text.substring(0, 50) + (text.length > 50 ? "..." : ""));
   updateWidget(element, "checking");
 
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -358,6 +437,7 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
     const response: CheckResponse = await chrome.runtime.sendMessage(request);
 
     if (response.error) {
+      console.log("[AI Grammar Checker] API error:", response.error);
       updateWidget(element, "idle");
       return;
     }
@@ -368,6 +448,7 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
     const currentText = normalizeText(getElementText(element));
 
     if (currentText !== text) {
+      console.log("[AI Grammar Checker] Text changed during check, discarding result");
       updateWidget(element, "idle");
       return;
     }
@@ -375,6 +456,8 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
     // Filter out errors that would reverse a recently applied fix (prevents oscillation)
     state.errors = response.errors.filter((e) => !isReverseFix(element, e));
     state.correctedText = response.correctedText;
+
+    console.log("[AI Grammar Checker] Found", state.errors.length, "errors");
 
     // Update widget state
     const visibleErrors = state.errors.filter(

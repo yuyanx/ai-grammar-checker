@@ -8,7 +8,7 @@ export function getShadowRoot(): ShadowRoot {
 
   const host = document.createElement("div");
   host.id = "ai-grammar-checker-host";
-  host.style.cssText = "position: absolute; top: 0; left: 0; z-index: 2147483647; pointer-events: none;";
+  host.style.cssText = "position: fixed; top: 0; left: 0; width: 0; height: 0; z-index: 2147483647; pointer-events: none; overflow: visible;";
   document.body.appendChild(host);
 
   shadowRoot = host.attachShadow({ mode: "closed" });

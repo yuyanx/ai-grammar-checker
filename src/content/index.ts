@@ -9,20 +9,28 @@ async function init(): Promise<void> {
 
   try {
     const settings = await getSettings();
-    if (!settings.enabled) return;
+    if (!settings.enabled) {
+      console.log("[AI Grammar Checker] Extension disabled, skipping init");
+      return;
+    }
 
     const configured = await isConfigured();
-    if (!configured) return;
+    if (!configured) {
+      console.log("[AI Grammar Checker] API key not configured, skipping init");
+      return;
+    }
 
     initialized = true;
+    console.log("[AI Grammar Checker] Initializing on", location.hostname);
 
     // Initialize shadow DOM
     getShadowRoot();
 
     // Start monitoring text fields
     startMonitoring();
-  } catch {
+  } catch (err) {
     // Extension context invalidated (extension was reloaded) — ignore silently
+    console.log("[AI Grammar Checker] Init error:", err);
   }
 }
 
