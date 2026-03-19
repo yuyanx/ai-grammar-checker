@@ -309,6 +309,13 @@ export const CONTENT_CSS = `
     line-height: 1;
   }
 
+  .grammar-widget--wide-count {
+    min-width: 28px;
+    width: auto;
+    padding: 0 6px;
+    border-radius: 999px;
+  }
+
   .grammar-widget__check {
     color: #fff;
     font-size: 13px;

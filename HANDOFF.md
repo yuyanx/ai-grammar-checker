@@ -68,6 +68,11 @@ Load `dist/` as unpacked extension in Chrome.
 - Large text inputs may still be slow because the full normalized text is sent to the API each time
 - Instagram placement is verified on a local fixture, but live-page DOM inspection in Safari is limited because `do JavaScript` from Apple Events is disabled on this machine
 - X home search box still clips the compact badge's hover tooltip in some layouts even after outside-badge fallback; treat as deferred edge case unless it becomes higher priority
+- Gmail long-draft `Fix All` still needs convergence work in some cases; repeated Fix All clicks can cascade remaining issues and punctuation can oscillate (`though -> though,` then `though,. -> though.`)
+- Gmail/Grok ready-state widget lifecycle still needs stabilization; blue ready badges can occasionally fail to appear, linger on stale editors, or flicker/re-render during scroll/layout changes
+- Ready/error widget size logic is currently geometry-based in `status-widget.ts`: editors with `getBoundingClientRect().height < 44` use the compact dot path, otherwise the full circular badge path
+- Underline rendering can still become visually messy or stale in some layouts and needs a render-cancellation / stale-overlay cleanup pass
+- Add deterministic local punctuation heuristics for obvious cases the model can miss (for example duplicated terminal punctuation or comma-period conflicts) instead of relying entirely on provider output
 
 ## Commands
 ```bash

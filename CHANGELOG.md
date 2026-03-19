@@ -1,5 +1,52 @@
 # Changelog
 
+## v1.8.9
+
+### Bug Fixes
+- Rebuild long-draft Fix All results from one normalized corrected paragraph after chunked checking so repeated Fix All clicks stop chasing unstable leftover punctuation edits
+- Filter unstable derived punctuation-only toggles from corrected-text fallback results so loops like though -> though, -> though. no longer persist in the panel
+
+## v1.8.8
+
+### Bug Fixes
+- Wait for each contenteditable Fix All replacement to settle before applying the next one so rich editors like Gmail stop skipping or corrupting later fixes in long drafts
+- Clear stale ready and checking badges from previously focused editors so Gmail does not show multiple blue ready dots at the same time
+
+## v1.8.7
+
+### Bug Fixes
+- Show exact error counts on the non-compact issue badge up to 99 instead of collapsing everything above 9 into 9+, and switch to 99+ for larger totals
+
+## v1.8.6
+
+### Bug Fixes
+- Split longer drafts into smaller sentence chunks before sending them to the AI so multi-sentence Gmail passages no longer fail as a single oversized zero-error request
+- Invalidate cached clean results again so longer drafts are rechecked through the new chunked request path
+
+## v1.8.5
+
+### Bug Fixes
+- Harden AI response parsing so longer replies that include fenced JSON or extra wrapper text no longer get treated as zero-error clean results
+- Invalidate cached clean results again so Gmail drafts are rechecked through the more tolerant parser path
+
+## v1.8.4
+
+### Bug Fixes
+- Add a high-recall second-pass grammar check for longer clean-looking paragraphs so pasted Gmail drafts do not trust a single weak zero-error response
+
+## v1.8.3
+
+### Bug Fixes
+- Fall back to deriving issue spans from the AI's full corrected text when a provider returns a corrected paragraph but no usable per-error spans, preventing obvious multi-error drafts from collapsing to a false clean badge
+- Invalidate cached clean results again so Gmail-style drafts are rechecked through the new corrected-text fallback path
+
+## v1.8.2
+
+### Bug Fixes
+- Improve paragraph-level grammar detection prompts so realistic Gmail-style mixes of spelling, punctuation, capitalization, word-choice, tense, and agreement mistakes are requested in one pass instead of a too-narrow typo-only style check
+- Normalize broader AI error categories such as capitalization, word choice, tense, article, and typo back into the extension's internal grammar, spelling, and punctuation buckets instead of silently dropping them
+- Invalidate older cached check results after the prompt update so stale false-clean responses are not reused
+
 ## v1.8.1
 
 ### Bug Fixes

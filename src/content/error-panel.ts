@@ -4,6 +4,7 @@ import { isDarkMode } from "./dark-mode.js";
 import { applyFix, escapeHtml, hidePopover } from "./popover.js";
 import { errorKey } from "./underline-renderer.js";
 import { trackAppliedFix } from "./text-monitor.js";
+import { getContentEditableText } from "./contenteditable-snapshot.js";
 
 let currentPanel: HTMLElement | null = null;
 let currentElement: HTMLElement | null = null;
@@ -11,6 +12,7 @@ let panelCloseHandler: ((e: Event) => void) | null = null;
 let panelEscHandler: ((e: KeyboardEvent) => void) | null = null;
 let panelScrollHandler: (() => void) | null = null;
 let panelInputHandler: (() => void) | null = null;
+const CONTENTEDITABLE_FIX_SETTLE_MS = 180;
 
 export function isErrorPanelOpen(): boolean {
   return currentPanel !== null;
@@ -115,10 +117,11 @@ export function showErrorPanel(
   panel.appendChild(success);
 
   // Fix All handler
-  fixAllBtn.addEventListener("click", (e) => {
+  fixAllBtn.addEventListener("click", async (e) => {
     e.stopPropagation();
     e.preventDefault();
-    applyAllFixes(element, remainingErrors, list, correctedText);
+    fixAllBtn.setAttribute("disabled", "true");
+    await applyAllFixes(element, remainingErrors, list, correctedText);
     remainingErrors = [];
     updateTitle(title, 0);
     showSuccessState(list, success, fixAllBtn);
@@ -224,12 +227,12 @@ function createErrorItem(
  * Uses correctedText from the AI when available for a clean one-shot replacement.
  * Falls back to building corrected string from individual fixes.
  */
-function applyAllFixes(
+async function applyAllFixes(
   element: HTMLElement,
   errors: GrammarError[],
   listEl: HTMLElement,
   correctedText?: string
-): void {
+): Promise<void> {
   // Animate all items out
   const items = listEl.querySelectorAll(".grammar-error-panel__item");
   items.forEach((item) => {
@@ -273,6 +276,7 @@ function applyAllFixes(
     }
 
     element.dispatchEvent(new Event("input", { bubbles: true }));
+    return;
   } else if (element.isContentEditable) {
     element.focus();
     // Rich-text editors like X keep internal editor state separate from the
@@ -282,23 +286,54 @@ function applyAllFixes(
     // own mutation flow much more reliably.
     console.log("[AI Grammar Checker] Fix All: using sequential fixes for contenteditable");
     const sorted = [...errors].sort((a, b) => b.offset - a.offset);
-    applyFixesSequentially(element, sorted, 0);
+    await applyFixesSequentially(element, sorted, 0);
   }
 }
 
 /**
  * Apply contentEditable fixes one at a time with delays for MAIN world processing.
  */
-function applyFixesSequentially(
+async function applyFixesSequentially(
   element: HTMLElement,
   errors: GrammarError[],
   index: number
-): void {
+): Promise<void> {
   if (index >= errors.length) return;
+
+  const textBefore = getContentEditableText(element);
   applyFix(element, errors[index]);
-  setTimeout(() => {
-    applyFixesSequentially(element, errors, index + 1);
-  }, 50);
+  await waitForContentEditableFixSettle(element, textBefore);
+  await applyFixesSequentially(element, errors, index + 1);
+}
+
+function waitForContentEditableFixSettle(
+  element: HTMLElement,
+  textBefore: string
+): Promise<void> {
+  return new Promise((resolve) => {
+    let resolved = false;
+    const start = Date.now();
+
+    const finish = () => {
+      if (resolved) return;
+      resolved = true;
+      resolve();
+    };
+
+    const poll = () => {
+      if (getContentEditableText(element) !== textBefore) {
+        finish();
+        return;
+      }
+      if (Date.now() - start >= CONTENTEDITABLE_FIX_SETTLE_MS) {
+        finish();
+        return;
+      }
+      setTimeout(poll, 30);
+    };
+
+    setTimeout(poll, 30);
+  });
 }
 
 function animateRemoveItem(item: HTMLElement): void {

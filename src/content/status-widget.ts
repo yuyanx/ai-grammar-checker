@@ -4,6 +4,7 @@ import { isDarkMode } from "./dark-mode.js";
 export type WidgetState = "idle" | "ready" | "checking" | "errors" | "clean" | "error";
 
 const widgetMap = new WeakMap<HTMLElement, string>();
+const widgetElements = new Set<HTMLElement>();
 const widgetStates = new WeakMap<HTMLElement, {
   state: WidgetState;
   errorCount: number;
@@ -44,6 +45,7 @@ export function updateWidget(
     onClickErrors,
     hideAt: state === "clean" ? Date.now() + 3000 : undefined,
   });
+  widgetElements.add(element);
   renderWidget(element);
 }
 
@@ -106,12 +108,13 @@ function renderWidget(element: HTMLElement): void {
     `;
   } else if (state === "errors") {
     const dotClass = isCompact ? " grammar-widget--compact-dot" : "";
-    widget.className = `grammar-widget grammar-widget--errors${compactClass}${dotClass}`;
+    const wideCountClass = !isCompact && errorCount >= 10 ? " grammar-widget--wide-count" : "";
+    widget.className = `grammar-widget grammar-widget--errors${compactClass}${dotClass}${wideCountClass}`;
     widget.innerHTML = `
       <div class="grammar-widget__tooltip${dark ? " grammar-widget__tooltip--dark" : ""}">${errorCount} issue${errorCount !== 1 ? "s" : ""} found</div>
     `;
     if (!isCompact) {
-      widget.insertAdjacentHTML("afterbegin", `<span class="grammar-widget__count">${errorCount > 9 ? "9+" : errorCount}</span>`);
+      widget.insertAdjacentHTML("afterbegin", `<span class="grammar-widget__count">${formatErrorCount(errorCount)}</span>`);
     }
     widget.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -161,6 +164,7 @@ export function removeWidget(element: HTMLElement): void {
     const container = getOrCreateContainer(containerId);
     container.innerHTML = "";
   }
+  widgetElements.delete(element);
 }
 
 /**
@@ -171,6 +175,27 @@ export function removeAllWidgets(): void {
   const root = getShadowRoot();
   const containers = root.querySelectorAll("[id^='widget-']");
   containers.forEach((c) => { c.innerHTML = ""; });
+  widgetElements.clear();
+}
+
+export function clearTransientWidgetsExcept(activeElement: HTMLElement): void {
+  for (const element of Array.from(widgetElements)) {
+    if (element === activeElement) continue;
+    if (!element.isConnected) {
+      widgetElements.delete(element);
+      continue;
+    }
+
+    const state = widgetStates.get(element);
+    if (!state) continue;
+    if (state.state === "errors" || state.state === "error") continue;
+
+    widgetStates.set(element, { state: "idle", errorCount: 0 });
+    const containerId = widgetMap.get(element);
+    if (!containerId) continue;
+    const container = getOrCreateContainer(containerId);
+    container.innerHTML = "";
+  }
 }
 
 function getWidgetContainerId(element: HTMLElement): string {
@@ -191,6 +216,11 @@ function getCornerWidgetPosition(rect: DOMRect, size: number, inset: number): { 
 function getCompactWidgetSize(state: WidgetState): number {
   if (state === "errors" || state === "ready") return 12;
   return 18;
+}
+
+function formatErrorCount(errorCount: number): string {
+  if (errorCount > 99) return "99+";
+  return String(errorCount);
 }
 
 function clamp(value: number, min: number, max: number): number {

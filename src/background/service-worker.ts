@@ -1,8 +1,14 @@
 import { CheckRequest, CheckResponse, GrammarError, PrewarmRequest, PrewarmResponse } from "../shared/types.js";
 import { getSettings } from "../shared/storage.js";
-import { buildGrammarCheckPrompt } from "../shared/prompts.js";
-import { parseOpenAIResponse, parseGeminiResponse, validateErrors, ParsedResponse } from "../shared/api-parsers.js";
+import { buildGrammarCheckPrompt, buildGrammarRecheckPrompt } from "../shared/prompts.js";
+import { parseOpenAIResponse, parseGeminiResponse, validateErrors, deriveErrorsFromCorrectedText, ParsedResponse } from "../shared/api-parsers.js";
 import { OPENAI_API_URL, GEMINI_API_URL, DEFAULT_OPENAI_MODEL, MAX_TEXT_LENGTH, PROMPT_CACHE_VERSION } from "../shared/constants.js";
+
+interface TextChunk {
+  text: string;
+  start: number;
+  end: number;
+}
 
 // Rate limit state lives here in the service worker — persists across all tabs/page loads
 let rateLimitedUntil = 0;
@@ -137,31 +143,14 @@ async function handleCheckGrammar(
   const abortController = new AbortController();
   inflightAborts.set(requestScope, abortController);
 
-  const { system, user } = buildGrammarCheckPrompt(text);
-
   let parsed: ParsedResponse;
+  let errors: GrammarError[];
 
   try {
-    if (settings.provider === "openai") {
-      if (!settings.openaiApiKey) {
-        return {
-          type: "CHECK_GRAMMAR_RESULT",
-          requestId: request.requestId,
-          errors: [],
-          error: "OpenAI API key not configured",
-        };
-      }
-      parsed = await callOpenAI(system, user, settings.openaiApiKey, abortController.signal);
+    if (shouldChunkText(text)) {
+      ({ parsed, errors } = await checkTextInChunks(text, settings, abortController.signal));
     } else {
-      if (!settings.geminiApiKey) {
-        return {
-          type: "CHECK_GRAMMAR_RESULT",
-          requestId: request.requestId,
-          errors: [],
-          error: "Gemini API key not configured",
-        };
-      }
-      parsed = await callGemini(system, user, settings.geminiApiKey, abortController.signal);
+      ({ parsed, errors } = await checkSingleText(text, settings, abortController.signal));
     }
   } finally {
     if (inflightAborts.get(requestScope) === abortController) {
@@ -169,10 +158,6 @@ async function handleCheckGrammar(
     }
   }
 
-  console.log("[AI Grammar Checker] Raw errors from API:", JSON.stringify(parsed.errors));
-
-  // Validate and filter errors
-  let errors = validateErrors(parsed.errors, text);
   console.log("[AI Grammar Checker] Validated errors:", errors.length, JSON.stringify(errors));
 
   // Cache the unfiltered result
@@ -189,6 +174,193 @@ async function handleCheckGrammar(
     errors,
     correctedText: parsed.correctedText,
   };
+}
+
+async function checkSingleText(
+  text: string,
+  settings: Awaited<ReturnType<typeof getSettings>>,
+  signal?: AbortSignal
+): Promise<{ parsed: ParsedResponse; errors: GrammarError[] }> {
+  const prompt = buildGrammarCheckPrompt(text);
+  let parsed = await callConfiguredProvider(
+    settings,
+    prompt.system,
+    prompt.user,
+    signal
+  );
+
+  console.log("[AI Grammar Checker] Raw errors from API:", JSON.stringify(parsed.errors));
+
+  let errors = validateErrors(parsed.errors, text);
+  if (errors.length === 0 && parsed.correctedText && parsed.correctedText !== text) {
+    errors = deriveErrorsFromCorrectedText(text, parsed.correctedText);
+    console.log("[AI Grammar Checker] Derived errors from correctedText:", errors.length, JSON.stringify(errors));
+  }
+
+  if (shouldRunHighRecallFallback(text, errors, parsed.correctedText)) {
+    console.log("[AI Grammar Checker] Running high-recall recheck fallback");
+    const fallbackPrompt = buildGrammarRecheckPrompt(text);
+    const fallbackParsed = await callConfiguredProvider(
+      settings,
+      fallbackPrompt.system,
+      fallbackPrompt.user,
+      signal
+    );
+    let fallbackErrors = validateErrors(fallbackParsed.errors, text);
+    if (fallbackErrors.length === 0 && fallbackParsed.correctedText && fallbackParsed.correctedText !== text) {
+      fallbackErrors = deriveErrorsFromCorrectedText(text, fallbackParsed.correctedText);
+      console.log("[AI Grammar Checker] Derived fallback errors from correctedText:", fallbackErrors.length, JSON.stringify(fallbackErrors));
+    }
+    if (fallbackErrors.length > 0) {
+      parsed = fallbackParsed;
+      errors = fallbackErrors;
+    }
+  }
+
+  return { parsed, errors };
+}
+
+async function checkTextInChunks(
+  text: string,
+  settings: Awaited<ReturnType<typeof getSettings>>,
+  signal?: AbortSignal
+): Promise<{ parsed: ParsedResponse; errors: GrammarError[] }> {
+  const chunks = splitTextIntoChunks(text);
+  console.log("[AI Grammar Checker] Chunking long text into", chunks.length, "chunks");
+
+  const mergedErrors: GrammarError[] = [];
+  let correctedText = "";
+
+  for (const chunk of chunks) {
+    const { parsed, errors } = await checkSingleText(chunk.text, settings, signal);
+    mergedErrors.push(...errors.map((error) => ({
+      ...error,
+      offset: error.offset + chunk.start,
+    })));
+    correctedText += (parsed.correctedText && parsed.correctedText.trim().length > 0)
+      ? parsed.correctedText
+      : chunk.text;
+  }
+
+  const normalizedCorrectedText = normalizeCorrectedText(text, correctedText);
+  const normalizedMergedErrors = deriveErrorsFromCorrectedText(text, normalizedCorrectedText);
+
+  return {
+    parsed: {
+      errors: normalizedMergedErrors,
+      correctedText: normalizedCorrectedText,
+    },
+    errors: normalizedMergedErrors,
+  };
+}
+
+function shouldChunkText(text: string): boolean {
+  const sentenceCount = countSentences(text);
+  const wordCount = (text.match(/\b[\w']+\b/g) || []).length;
+  return sentenceCount > 3 || wordCount > 45 || text.length > 260;
+}
+
+function countSentences(text: string): number {
+  return (text.match(/[.!?]+(?=(?:["'”’)\]]*\s+)|$)/g) || []).length;
+}
+
+function splitTextIntoChunks(text: string): TextChunk[] {
+  const sentences = splitIntoSentenceSlices(text);
+  if (sentences.length <= 1) {
+    return [{ text, start: 0, end: text.length }];
+  }
+
+  const chunks: TextChunk[] = [];
+  let chunkStartIndex = 0;
+  let currentStart = sentences[0].start;
+  let currentEnd = sentences[0].end;
+
+  for (let i = 1; i < sentences.length; i++) {
+    const candidateEnd = sentences[i].end;
+    const sentenceCount = i - chunkStartIndex + 1;
+    const candidateText = text.slice(currentStart, candidateEnd);
+    const shouldBreak =
+      sentenceCount > 3 ||
+      candidateText.length > 260;
+
+    if (shouldBreak) {
+      chunks.push({
+        text: text.slice(currentStart, currentEnd),
+        start: currentStart,
+        end: currentEnd,
+      });
+      chunkStartIndex = i;
+      currentStart = sentences[i].start;
+      currentEnd = sentences[i].end;
+    } else {
+      currentEnd = candidateEnd;
+    }
+  }
+
+  chunks.push({
+    text: text.slice(currentStart, currentEnd),
+    start: currentStart,
+    end: currentEnd,
+  });
+
+  return chunks;
+}
+
+function splitIntoSentenceSlices(text: string): Array<{ start: number; end: number }> {
+  const slices: Array<{ start: number; end: number }> = [];
+  const regex = /[^.!?]+(?:[.!?]+|$)(?:\s*)/g;
+
+  for (const match of text.matchAll(regex)) {
+    const value = match[0];
+    const start = match.index ?? 0;
+    const end = start + value.length;
+    if (value) {
+      slices.push({ start, end });
+    }
+  }
+
+  if (slices.length === 0) {
+    return [{ start: 0, end: text.length }];
+  }
+
+  return slices;
+}
+
+function normalizeCorrectedText(originalText: string, correctedText: string): string {
+  const originalTrailing = originalText.match(/\s*$/)?.[0] ?? "";
+  return correctedText.replace(/\s*$/, originalTrailing);
+}
+
+async function callConfiguredProvider(
+  settings: Awaited<ReturnType<typeof getSettings>>,
+  system: string,
+  user: string,
+  signal?: AbortSignal
+): Promise<ParsedResponse> {
+  if (settings.provider === "openai") {
+    if (!settings.openaiApiKey) {
+      throw new Error("OpenAI API key not configured");
+    }
+    return callOpenAI(system, user, settings.openaiApiKey, signal);
+  }
+
+  if (!settings.geminiApiKey) {
+    throw new Error("Gemini API key not configured");
+  }
+  return callGemini(system, user, settings.geminiApiKey, signal);
+}
+
+function shouldRunHighRecallFallback(
+  text: string,
+  errors: GrammarError[],
+  correctedText?: string
+): boolean {
+  if (errors.length > 0) return false;
+  if (correctedText && correctedText !== text) return false;
+
+  const wordCount = (text.match(/\b[\w']+\b/g) || []).length;
+  const sentenceCount = (text.match(/[.!?](?:\s|$)/g) || []).length;
+  return text.length >= 120 && wordCount >= 20 && sentenceCount >= 2;
 }
 
 async function handlePrewarm(_request: PrewarmRequest): Promise<PrewarmResponse> {
@@ -301,7 +473,7 @@ async function callGemini(
                   suggestion: { type: "string" },
                   offset: { type: "integer" },
                   length: { type: "integer" },
-                  type: { type: "string", enum: ["grammar", "spelling", "punctuation"] },
+                  type: { type: "string" },
                   explanation: { type: "string" },
                 },
                 required: ["original", "suggestion", "offset", "length", "type", "explanation"],

@@ -1,7 +1,7 @@
 import { GrammarError, CheckRequest, CheckResponse, ElementState, PrewarmResponse } from "../shared/types.js";
 import { getSettings, isConfigured } from "../shared/storage.js";
 import { renderErrors, clearErrors, clearAllErrors, errorKey } from "./underline-renderer.js";
-import { updateWidget, removeWidget, removeAllWidgets, refreshWidget } from "./status-widget.js";
+import { updateWidget, removeWidget, removeAllWidgets, refreshWidget, clearTransientWidgetsExcept } from "./status-widget.js";
 import { showPopover } from "./popover.js";
 import { showErrorPanel, hideErrorPanel } from "./error-panel.js";
 import { getContentEditableText } from "./contenteditable-snapshot.js";
@@ -191,6 +191,7 @@ export async function startMonitoring(): Promise<void> {
     }
 
     if (elementStates.has(el)) {
+      clearTransientWidgetsExcept(el);
       void prewarmBackground();
       primeElementOnFocus(el);
     }
