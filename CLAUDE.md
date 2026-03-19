@@ -57,12 +57,12 @@ Implemented / present:
 
 Known issues still open:
 
-- `Fix All` convergence can still cascade through multiple rechecks before settling
 - Punctuation can still be too model-dependent in some obvious cases
 - Blue ready badge can be missing, stale, duplicated, or flicker/re-animate during scroll/layout changes
 - No enforced English-only gating; non-English text can still be sent to the provider
 - Chat-composer badge sizing/placement can still overlap text
 - Underline rendering can become stale, messy, or collide visually with badge/tooltip UI
+- `Fix All` remains unstable on long Gmail drafts and is now deferred from the active roadmap until the other correctness/UX issues are resolved
 
 ### Design Intention
 
@@ -80,13 +80,11 @@ Do not optimize speed first if the correction pipeline is still non-convergent o
 
 Highest priority:
 
-1. Fix long-draft `Fix All` convergence
-2. Add deterministic punctuation rules
-3. Add English-only gating / suppress non-English checks
+1. Add deterministic punctuation rules
+2. Add English-only gating / suppress non-English checks
 
 Key intent:
 
-- Long drafts should converge from one `Fix All` action, not cascade through repeated follow-up passes
 - Punctuation should not rely entirely on the model for obvious malformed cases
 - The extension is intended for English correction, so non-English input should be suppressed before request dispatch
 
@@ -94,12 +92,14 @@ Key intent:
 
 Next priority:
 
+3. Keep one stable long-draft checking state
 4. Stabilize ready-badge lifecycle
 5. Refine badge size allocation and placement for chat composers
 6. Fix stale underline rendering / collision cleanup
 
 Key intent:
 
+- Long-draft checking should remain in one stable checking state until final results arrive
 - Blue ready/checking/clean warning states should be attached only to the active editor lifecycle and should not linger or flicker
 - Badge size should not be determined only by a crude height rule when safe-space-based allocation is needed
 - Chat composers like Grok should not allow the badge to overlap the active text line
@@ -119,14 +119,20 @@ Key intent:
 
 ### Current Recommended Priority Sequence
 
-1. Make long-draft `Fix All` converge from one authoritative merged corrected text
-2. Add deterministic local punctuation heuristics for obvious cases
-3. Enforce English-only gating / suppress non-English checks and provider calls
+1. Add deterministic local punctuation heuristics for obvious cases
+2. Enforce English-only gating / suppress non-English checks and provider calls
+3. Keep one stable long-draft checking state during chunked checks
 4. Stabilize ready-badge focus lifecycle across Gmail/Grok-style editors
 5. Refine badge size allocation and placement for chat composers based on safe space, not only editor height
 6. Add stale-render cancellation and collision cleanup for underlines / badge tooltips
 7. Parallelize chunk checks with capped concurrency
 8. Add per-chunk caching
+
+### Deferred Backlog
+
+- Long-draft `Fix All` convergence and authoritative merged corrected-text application
+- Contenteditable whole-editor `Fix All` replacement experiments
+- Post-`Fix All` validation/recheck lifecycle work
 
 ### Specific Product Expectations To Preserve
 
@@ -150,6 +156,7 @@ Please:
   - acceptance criteria for each sub-task
   - risks and mitigations
   - implementation priorities and dependencies
-- Prefer a roadmap that minimizes regressions while improving correctness first, then UX stability, then performance
+- Prefer a roadmap that minimizes regressions while improving punctuation/language correctness first, then UX stability, then performance
+- Exclude `Fix All` from the active implementation roadmap for now; treat it as deferred backlog unless explicitly re-opened
 
 Do **not** start from a generic plan. Use the current implementation shape in this repo as the basis for the roadmap.

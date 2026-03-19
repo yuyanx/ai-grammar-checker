@@ -10,7 +10,7 @@ npm run build
 Load `dist/` as unpacked extension in Chrome.
 
 ## Current State
-- Current package/manifest version: `1.6.14`
+- Current package/manifest version: `1.8.10`
 - `npm run build` passes locally
 - Error panel feature complete: clicking the red badge opens a panel listing all errors with Fix/Dismiss per error and Fix All
 - Automatic single retry on transient API failures with visible orange "!" widget feedback
@@ -68,11 +68,35 @@ Load `dist/` as unpacked extension in Chrome.
 - Large text inputs may still be slow because the full normalized text is sent to the API each time
 - Instagram placement is verified on a local fixture, but live-page DOM inspection in Safari is limited because `do JavaScript` from Apple Events is disabled on this machine
 - X home search box still clips the compact badge's hover tooltip in some layouts even after outside-badge fallback; treat as deferred edge case unless it becomes higher priority
-- Gmail long-draft `Fix All` still needs convergence work in some cases; repeated Fix All clicks can cascade remaining issues and punctuation can oscillate (`though -> though,` then `though,. -> though.`)
+- Gmail long-draft `Fix All` still needs convergence work in some cases; repeated Fix All clicks can cascade remaining issues and punctuation can oscillate (`though -> though,` then `though,. -> though.`). This work is now deferred from the active roadmap until the other correctness/UX issues are handled.
 - Gmail/Grok ready-state widget lifecycle still needs stabilization; blue ready badges can occasionally fail to appear, linger on stale editors, or flicker/re-render during scroll/layout changes
 - Ready/error widget size logic is currently geometry-based in `status-widget.ts`: editors with `getBoundingClientRect().height < 44` use the compact dot path, otherwise the full circular badge path
 - Underline rendering can still become visually messy or stale in some layouts and needs a render-cancellation / stale-overlay cleanup pass
 - Add deterministic local punctuation heuristics for obvious cases the model can miss (for example duplicated terminal punctuation or comma-period conflicts) instead of relying entirely on provider output
+- No English-only gating exists yet, so non-English text can still be sent to the provider and chat composers like Grok can feel translation-biased instead of English-correction-only
+- Long-draft checking should stay in one stable `checking` state, but chunked work currently still needs a dedicated UX-stability pass
+
+## Active Roadmap (Fix All Deferred)
+
+### Phase 1: Detection Reliability
+1. Add deterministic local punctuation rules for obvious malformed punctuation patterns
+2. Add English-only gating in both content script and service worker so non-English text is suppressed before provider calls
+
+### Phase 2: Stable UX
+3. Keep one stable long-draft `checking` state during chunked checks
+4. Stabilize ready-badge lifecycle so transient badges only belong to the active editor
+5. Stop badge flicker/re-animation on scroll and resize
+6. Refine compact/full badge sizing and placement for chat composers so the badge never overlaps active text
+7. Fix stale underline rendering and badge/tooltip collision cleanup
+
+### Phase 3: Performance
+8. Parallelize chunk checks with a small concurrency cap
+9. Add per-chunk caching
+
+## Deferred Backlog
+- Long-draft `Fix All` convergence
+- Contenteditable whole-editor `Fix All` replacement experiments
+- Post-`Fix All` validation and oscillation suppression work
 
 ## Commands
 ```bash

@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.8.10
+
+### Notes
+- Update the active handoff roadmap to defer `Fix All` work and prioritize punctuation rules, English-only gating, stable checking state, badge lifecycle/placement, underline cleanup, and later chunk-performance work
+
 ## v1.8.9
 
 ### Bug Fixes
