@@ -53,6 +53,7 @@ Output: {"correctedText": "My friend kept saying, \"This one looks better than t
 Rules:
 - text.substring(offset, offset + length) MUST exactly equal "original".
 - For missing punctuation at the end of the text, use the last word as "original" and append the punctuation in "suggestion".
+- Before returning a punctuation or quotation-mark fix, inspect the characters immediately before and after the span. Do not add punctuation or a closing quotation mark if it already exists just outside the selected span.
 - Only fix genuine errors. Do not alter meaning, tone, or style.
 - Do NOT hallucinate errors.
 - Each correction MUST be consistent with all other corrections. correctedText must be correct as a whole.

@@ -5,7 +5,7 @@ interface Span {
   end: number;
 }
 
-export const PUNCTUATION_RULES_VERSION = "2026-03-19-v1";
+export const PUNCTUATION_RULES_VERSION = "2026-03-20-v3";
 
 const URL_RE = /\bhttps?:\/\/\S+/gi;
 const EMAIL_RE = /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/g;
@@ -61,6 +61,101 @@ export function findLocalPunctuationErrors(text: string): GrammarError[] {
     );
   }
 
+  for (const match of text.matchAll(/(["“”])\1+/g)) {
+    const start = match.index ?? -1;
+    if (start < 0) continue;
+    pushError(
+      errors,
+      seen,
+      exclusions,
+      text,
+      start,
+      start + match[0].length,
+      match[1],
+      "Reduce repeated quotation marks to a single quotation mark."
+    );
+  }
+
+  for (const match of text.matchAll(/(["”]),\s*(but|and|or|yet)\b/gi)) {
+    const start = match.index ?? -1;
+    if (start < 0) continue;
+    if (isLikelyOpeningQuote(text, start)) continue;
+    pushError(
+      errors,
+      seen,
+      exclusions,
+      text,
+      start,
+      start + match[0].length,
+      `,${match[1]} ${match[2]}`,
+      "Move the comma inside the closing quotation mark."
+    );
+  }
+
+  for (const match of text.matchAll(/(["”])\s+(but|and|or|yet)\b/gi)) {
+    const start = match.index ?? -1;
+    if (start < 0) continue;
+    if (isLikelyOpeningQuote(text, start)) continue;
+    if (start > 0 && text[start - 1] === ",") continue;
+    pushError(
+      errors,
+      seen,
+      exclusions,
+      text,
+      start,
+      start + match[0].length,
+      `,${match[1]} ${match[2]}`,
+      "Add the comma inside the closing quotation mark before the conjunction."
+    );
+  }
+
+  for (const match of text.matchAll(/,(["”])(but|and|or|yet)\b/gi)) {
+    const start = match.index ?? -1;
+    if (start < 0) continue;
+    if (isLikelyOpeningQuote(text, start + 1)) continue;
+    pushError(
+      errors,
+      seen,
+      exclusions,
+      text,
+      start,
+      start + match[0].length,
+      `,${match[1]} ${match[2]}`,
+      "Add a space after the closing quotation mark."
+    );
+  }
+
+  for (const match of text.matchAll(/(["”])([.!?])(["”])(\s*)([A-Z])/g)) {
+    const start = match.index ?? -1;
+    if (start < 0) continue;
+    if (isLikelyOpeningQuote(text, start)) continue;
+    pushError(
+      errors,
+      seen,
+      exclusions,
+      text,
+      start,
+      start + match[0].length,
+      `${match[2]}${match[3]} ${match[5]}`,
+      "Normalize the closing quotation punctuation."
+    );
+  }
+
+  for (const match of text.matchAll(/([.!?])(["”])([.!?])(["”])(\s*)([A-Z])/g)) {
+    const start = match.index ?? -1;
+    if (start < 0) continue;
+    pushError(
+      errors,
+      seen,
+      exclusions,
+      text,
+      start,
+      start + match[0].length,
+      `${match[1]}${match[2]} ${match[6]}`,
+      "Remove the duplicated closing punctuation around the quotation mark."
+    );
+  }
+
   for (const match of text.matchAll(/([^\s])(\s+)([,.!?;:])/g)) {
     const start = (match.index ?? -1) + match[1].length;
     if (start < 0) continue;
@@ -98,7 +193,55 @@ export function findLocalPunctuationErrors(text: string): GrammarError[] {
     );
   }
 
-  return errors.sort((a, b) => a.offset - b.offset);
+  for (const match of text.matchAll(/([,;:])(["“])[ \t]+([A-Za-z])/g)) {
+    const start = match.index ?? -1;
+    if (start < 0) continue;
+    if (!isLikelyOpeningQuote(text, start + match[1].length)) continue;
+    pushError(
+      errors,
+      seen,
+      exclusions,
+      text,
+      start,
+      start + match[0].length,
+      `${match[1]} ${match[2]}${match[3]}`,
+      "Normalize the spacing around the opening quotation mark."
+    );
+  }
+
+  for (const match of text.matchAll(/([,;:])(["“])(?=\S)/g)) {
+    const start = match.index ?? -1;
+    if (start < 0) continue;
+    if (!isLikelyOpeningQuote(text, start + match[1].length)) continue;
+    pushError(
+      errors,
+      seen,
+      exclusions,
+      text,
+      start,
+      start + match[0].length,
+      `${match[1]} ${match[2]}`,
+      "Add a space before the opening quotation mark."
+    );
+  }
+
+  for (const match of text.matchAll(/(["“])[ \t]+([A-Za-z])/g)) {
+    const start = match.index ?? -1;
+    if (start < 0) continue;
+    if (!isLikelyOpeningQuote(text, start)) continue;
+    pushError(
+      errors,
+      seen,
+      exclusions,
+      text,
+      start,
+      start + match[0].length,
+      `${match[1]}${match[2]}`,
+      "Remove the space after the opening quotation mark."
+    );
+  }
+
+  return coalesceQuoteBoundaryErrors(errors).sort((a, b) => a.offset - b.offset);
 }
 
 function pushError(
@@ -147,4 +290,65 @@ function findExclusionSpans(text: string): Span[] {
 
 function overlapsExcludedSpan(start: number, end: number, exclusions: Span[]): boolean {
   return exclusions.some((span) => start < span.end && end > span.start);
+}
+
+function coalesceQuoteBoundaryErrors(errors: GrammarError[]): GrammarError[] {
+  const sorted = [...errors].sort((a, b) => a.offset - b.offset || b.length - a.length);
+  const merged: GrammarError[] = [];
+
+  for (const error of sorted) {
+    const overlappingIndex = merged.findIndex((existing) =>
+      isQuoteBoundaryError(existing) &&
+      isQuoteBoundaryError(error) &&
+      rangesOverlap(existing, error)
+    );
+
+    if (overlappingIndex === -1) {
+      merged.push(error);
+      continue;
+    }
+
+    const existing = merged[overlappingIndex];
+    if (shouldPreferQuoteBoundaryError(error, existing)) {
+      merged[overlappingIndex] = error;
+    }
+  }
+
+  return merged;
+}
+
+function isQuoteBoundaryError(error: GrammarError): boolean {
+  return /quotation|quote/i.test(error.explanation) || /["“”]/.test(`${error.original}${error.suggestion}`);
+}
+
+function shouldPreferQuoteBoundaryError(candidate: GrammarError, existing: GrammarError): boolean {
+  if (candidate.length !== existing.length) {
+    return candidate.length > existing.length;
+  }
+
+  return candidate.suggestion.length > existing.suggestion.length;
+}
+
+function rangesOverlap(a: GrammarError, b: GrammarError): boolean {
+  const aEnd = a.offset + Math.max(a.length, 1);
+  const bEnd = b.offset + Math.max(b.length, 1);
+  return a.offset < bEnd && b.offset < aEnd;
+}
+
+function isLikelyOpeningQuote(text: string, quoteIndex: number): boolean {
+  const quoteChar = text[quoteIndex];
+  if (quoteChar === "“") {
+    return true;
+  }
+
+  const immediatePrevious = quoteIndex > 0 ? text[quoteIndex - 1] : "";
+  if (!immediatePrevious) {
+    return true;
+  }
+
+  if (/\s/.test(immediatePrevious)) {
+    return true;
+  }
+
+  return /[([{<\-–—]/.test(immediatePrevious);
 }

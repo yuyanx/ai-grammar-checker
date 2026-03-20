@@ -1,5 +1,69 @@
 # Changelog
 
+## v1.12.11
+
+### Bug Fixes
+- Reject coordinated-phrase noun-number changes such as `my friend and I` -> `my friends and I` in the derived corrected-text fallback path, so that bad fallback suggestion no longer leaks through as a spelling issue
+
+## v1.12.10
+
+### Bug Fixes
+- Collapse competing explicit suggestions for the same exact text span down to one surfaced issue before rendering, so inflated counts and conflicting `Fix All` edits stop fighting over the same word
+- Reject bogus grammar-number suggestions inside coordinated phrases like `my friend and I`, so bad model edits such as `friend` → `friends` no longer surface
+
+## v1.12.9
+
+### Bug Fixes
+- Reject redundant explicit quote-closing and punctuation-appending suggestions when the same boundary characters already exist just outside the matched span, so bogus fixes like `leave.` → `leave."` no longer surface after the quote is already present
+- Tighten the grammar-check prompt so the model stops suggesting quote-closing or punctuation additions when those boundary characters already exist immediately outside the selected span
+
+## v1.12.8
+
+### Bug Fixes
+- Make contenteditable `Fix All` derive and apply one canonical non-overlapping edit set from the AI's `correctedText`, instead of replaying every overlapping surfaced issue one by one
+- Stop contenteditable fallback matching from jumping to the first repeated word occurrence, so short fixes like `one` no longer drift into earlier words such as `none`
+
+## v1.12.7
+
+### Bug Fixes
+- Reject explicit grammar suggestions that try to capitalize a mid-sentence word and add an introductory comma, so nonsense edits like `so` → `So,` no longer surface inside phrases such as `I wasn't so sure`
+
+## v1.12.6
+
+### Bug Fixes
+- Restore contenteditable `Fix All` batching to the same `applyFix()` path used by individual Accept actions, instead of forcing tiny punctuation edits through direct DOM replacement first
+- Stop the latest `Fix All` regression where simple punctuation-only batches could silently fail or keep resurfacing the same tiny issues even though accepting them one-by-one still worked
+
+## v1.12.5
+
+### Bug Fixes
+- Stop quote-spacing punctuation rules from treating closing quotes like opening quotes, so `Fix All` no longer removes the valid space in patterns like `one" but` and reintroduces the same quote issues on the next check
+- Apply tiny contenteditable punctuation fixes through the deterministic DOM replacement path during `Fix All`, so quote-boundary edits do not get skipped by the selection/execCommand path and reappear on the next check
+- Detect malformed closing quote punctuation clusters like `pay"."` and `leave."."` as one canonical local punctuation fix per boundary, instead of letting them pass undetected or break into competing micro-fixes
+
+## v1.12.4
+
+### Bug Fixes
+- Stop quote-spacing punctuation rules from treating closing quotes like opening quotes, so `Fix All` no longer removes the valid space in patterns like `one" but` and reintroduces the same quote issues on the next check
+- Apply tiny contenteditable punctuation fixes through the deterministic DOM replacement path during `Fix All`, so quote-boundary edits do not get skipped by the selection/execCommand path and reappear on the next check
+
+## v1.12.3
+
+### Bug Fixes
+- Restore the 1.12.1 contenteditable Fix All behavior for normal grammar-heavy drafts while keeping the blue badge scroll-position fix
+- Detect quote-heavy punctuation mistakes such as repeated quotation marks and missing spaces before opening quotes without letting corrected-text fallback explode them into unrelated grammar/spelling cascades
+
+## v1.12.2
+
+### Bug Fixes
+- Suspend contenteditable checks while Fix All is applying sequential edits and run one clean validation pass after the batch settles, so normal grammar corrections stop cascading across multiple passes
+- Resolve repeated-word contenteditable ranges against the nearest matching occurrence instead of the first occurrence, so Fix All targets the intended span more reliably
+
+## v1.12.1
+
+### Bug Fixes
+- Stop animating scroll-driven widget top/left position updates so the blue ready badge stays visually fixed to the editor instead of lagging while the page scrolls
+
 ## v1.12.0
 
 ### Features

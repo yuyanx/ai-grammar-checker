@@ -319,11 +319,20 @@ export function applyFix(
         const textAfter = getContentEditableText(element);
         if (textAfter === textBefore) {
           console.log("[AI Grammar Checker] execCommand failed, using DOM fallback");
-          directDomReplace(element, error.original, error.suggestion, error.offset);
+          applyFixDirectly(element, error);
         }
       }, 100);
     }
   }
+}
+
+export function applyFixDirectly(
+  element: HTMLElement,
+  error: GrammarError
+): boolean {
+  trackAppliedFix(element, error.original, error.suggestion);
+  element.focus();
+  return directDomReplace(element, error.original, error.suggestion, error.offset);
 }
 
 /**
@@ -349,7 +358,7 @@ function setContentEditableSelection(
  * Walks text nodes, finds the error text, and replaces it.
  * Dispatches InputEvent to notify rich-text editors (Quill, etc.) of the change.
  */
-function directDomReplace(element: HTMLElement, original: string, replacement: string, offset: number = -1): void {
+function directDomReplace(element: HTMLElement, original: string, replacement: string, offset: number = -1): boolean {
   const snapshot = buildContentEditableSnapshot(element);
   const range = getContentEditableRangeForError(
     element,
@@ -363,7 +372,9 @@ function directDomReplace(element: HTMLElement, original: string, replacement: s
     },
     snapshot
   );
-  if (!range) return;
+  if (!range) return false;
+
+  const textBefore = snapshot.text;
 
   range.deleteContents();
   const textNode = document.createTextNode(replacement);
@@ -378,6 +389,8 @@ function directDomReplace(element: HTMLElement, original: string, replacement: s
     inputType: "insertText",
     data: replacement,
   }));
+
+  return getContentEditableText(element) !== textBefore;
 }
 
 export function escapeHtml(str: string): string {

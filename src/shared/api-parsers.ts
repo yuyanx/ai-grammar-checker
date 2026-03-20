@@ -13,6 +13,10 @@ interface OriginalToken {
 
 const DERIVED_EXPLANATION = "Derived from the corrected text returned by the AI.";
 
+export function isDerivedError(error: GrammarError): boolean {
+  return error.explanation === DERIVED_EXPLANATION;
+}
+
 export function parseOpenAIResponse(responseJson: any): ParsedResponse {
   try {
     const content = getOpenAIContent(responseJson);
@@ -116,7 +120,7 @@ export function validateErrors(
       continue;
     }
 
-    let offset = typeof err.offset === "number" ? err.offset : -1;
+    const rawOffset = typeof err.offset === "number" ? err.offset : -1;
     const length = err.original.length;
 
     if (length === 0) {
@@ -138,69 +142,373 @@ export function validateErrors(
       continue;
     }
 
-    // Verify the offset matches
-    if (
-      offset >= 0 &&
-      originalText.substring(offset, offset + length) === err.original
-    ) {
-      // Skip if the suggestion is already applied at this position
-      // (e.g. "doing" → "doing?" when text already has "doing?")
-      // Only skip when the suggestion is longer than the original (insertion/append),
-      // to avoid false positives like "your" starts with "you"
-      if (
-        err.suggestion.length > err.original.length &&
-        originalText.substring(offset, offset + err.suggestion.length) === err.suggestion
-      ) {
-        continue;
-      }
-      const key = `${offset}:${length}`;
-      if (!usedOffsets.has(key)) {
-        usedOffsets.add(key);
-        validated.push({
-          original: err.original,
-          suggestion: err.suggestion,
-          offset,
-          length,
-          type: normalizedType,
-          explanation: err.explanation || "",
-        });
-      }
+    const offset = findBestErrorOffset(originalText, err.original, err.suggestion, rawOffset);
+    if (offset < 0) continue;
+
+    const suggestion = normalizeSuggestionAgainstContext(
+      originalText,
+      err.original,
+      err.suggestion,
+      offset
+    );
+    if (!suggestion || err.original === suggestion) {
       continue;
     }
 
-    // Fallback: find by indexOf (try all occurrences to avoid duplicates)
-    let searchFrom = 0;
-    let found = false;
-    while (!found) {
-      const foundIndex = originalText.indexOf(err.original, searchFrom);
-      if (foundIndex < 0) break;
-      // Skip if the suggestion is already applied at this position
-      if (
-        err.suggestion.length > err.original.length &&
-        originalText.substring(foundIndex, foundIndex + err.suggestion.length) === err.suggestion
-      ) {
-        searchFrom = foundIndex + 1;
-        continue;
-      }
-      const key = `${foundIndex}:${length}`;
-      if (!usedOffsets.has(key)) {
-        usedOffsets.add(key);
-        validated.push({
-          original: err.original,
-          suggestion: err.suggestion,
-          offset: foundIndex,
-          length,
-          type: normalizedType,
-          explanation: err.explanation || "",
-        });
-        found = true;
-      }
-      searchFrom = foundIndex + 1;
+    const normalizedError = {
+      ...err,
+      suggestion,
+    };
+
+    if (isContextuallyInvalidExplicitError(normalizedError, originalText, offset, normalizedType)) {
+      continue;
     }
-    // If neither works, silently drop this error
+
+    // Skip if the suggestion is already applied at this position
+    if (
+      suggestion.length > err.original.length &&
+      originalText.substring(offset, offset + suggestion.length) === suggestion
+    ) {
+      continue;
+    }
+
+    const key = `${offset}:${length}:${suggestion}`;
+    if (!usedOffsets.has(key)) {
+      usedOffsets.add(key);
+      validated.push({
+        original: err.original,
+        suggestion,
+        offset,
+        length,
+        type: normalizedType,
+        explanation: err.explanation || "",
+      });
+    }
   }
 
-  return validated;
+  return collapseCompetingSpanErrors(validated);
+}
+
+function findBestErrorOffset(
+  originalText: string,
+  original: string,
+  suggestion: string,
+  requestedOffset: number
+): number {
+  if (
+    requestedOffset >= 0 &&
+    originalText.substring(requestedOffset, requestedOffset + original.length) === original
+  ) {
+    return requestedOffset;
+  }
+
+  const candidates: number[] = [];
+  let searchFrom = 0;
+  while (true) {
+    const foundIndex = originalText.indexOf(original, searchFrom);
+    if (foundIndex < 0) break;
+    candidates.push(foundIndex);
+    searchFrom = foundIndex + 1;
+  }
+
+  if (candidates.length === 0) return -1;
+
+  const wordLike = /^[A-Za-z0-9']+$/.test(original);
+  const scopedCandidates = wordLike
+    ? candidates.filter((index) => isWholeWordMatch(originalText, index, original.length))
+    : candidates;
+
+  const usableCandidates = scopedCandidates.length > 0 ? scopedCandidates : candidates;
+  let bestIndex = -1;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const index of usableCandidates) {
+    const normalizedSuggestion = normalizeSuggestionAgainstContext(
+      originalText,
+      original,
+      suggestion,
+      index
+    );
+    const strippedChars = suggestion.length - normalizedSuggestion.length;
+    const distance = requestedOffset >= 0 ? Math.abs(index - requestedOffset) : 0;
+    const boundaryScore = wordLike && isWholeWordMatch(originalText, index, original.length) ? 2 : 0;
+    const score = strippedChars * 4 + boundaryScore - distance / 1000;
+
+    if (score > bestScore || (score === bestScore && distance < bestDistance)) {
+      bestScore = score;
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  }
+
+  return bestIndex;
+}
+
+function isWholeWordMatch(text: string, index: number, length: number): boolean {
+  const before = index > 0 ? text[index - 1] : "";
+  const after = index + length < text.length ? text[index + length] : "";
+  return !isWordChar(before) && !isWordChar(after);
+}
+
+function isWordChar(char: string): boolean {
+  return /[A-Za-z0-9']/.test(char);
+}
+
+function normalizeSuggestionAgainstContext(
+  originalText: string,
+  original: string,
+  suggestion: string,
+  offset: number
+): string {
+  let normalized = suggestion;
+  const previousBoundary = collectBoundaryContextBackward(originalText, offset - 1);
+  const nextBoundary = collectBoundaryContextForward(
+    originalText,
+    offset + original.length
+  );
+  let previousBoundaryIndex = previousBoundary.length - 1;
+  let nextBoundaryIndex = 0;
+
+  while (
+    normalized.length > 0 &&
+    isBoundaryDecoration(normalized[0]) &&
+    previousBoundaryIndex >= 0 &&
+    isEquivalentBoundaryChar(normalized[0], previousBoundary[previousBoundaryIndex])
+  ) {
+    normalized = normalized.slice(1);
+    previousBoundaryIndex--;
+  }
+
+  while (
+    normalized.length > 0 &&
+    isBoundaryDecoration(normalized[normalized.length - 1]) &&
+    nextBoundaryIndex < nextBoundary.length &&
+    isEquivalentBoundaryChar(
+      normalized[normalized.length - 1],
+      nextBoundary[nextBoundaryIndex]
+    )
+  ) {
+    normalized = normalized.slice(0, -1);
+    nextBoundaryIndex++;
+  }
+
+  return normalized;
+}
+
+function collectBoundaryContextBackward(text: string, index: number): string[] {
+  const boundary: string[] = [];
+  for (let i = index; i >= 0 && boundary.length < 4; i--) {
+    const char = text[i];
+    if (!isBoundaryDecoration(char)) break;
+    boundary.push(char);
+  }
+  return boundary.reverse();
+}
+
+function collectBoundaryContextForward(text: string, index: number): string[] {
+  const boundary: string[] = [];
+  for (let i = index; i < text.length && boundary.length < 4; i++) {
+    const char = text[i];
+    if (!isBoundaryDecoration(char)) break;
+    boundary.push(char);
+  }
+  return boundary;
+}
+
+function isBoundaryDecoration(char: string): boolean {
+  return /["“”'‘’.,!?;:]/.test(char);
+}
+
+function isEquivalentBoundaryChar(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (/["“”]/.test(a) && /["“”]/.test(b)) return true;
+  if (/[‘’']/.test(a) && /[‘’']/.test(b)) return true;
+  return false;
+}
+
+function isContextuallyInvalidExplicitError(
+  err: any,
+  originalText: string,
+  offset: number,
+  type: GrammarError["type"]
+): boolean {
+  if (type !== "grammar") return false;
+
+  if (isInvalidCoordinatedPhraseNumberChange(err, originalText, offset)) {
+    return true;
+  }
+
+  const explanation = typeof err.explanation === "string" ? err.explanation : "";
+  if (!/capital|introduct/i.test(explanation)) {
+    return false;
+  }
+
+  if (typeof err.original !== "string" || typeof err.suggestion !== "string") {
+    return false;
+  }
+
+  const original = err.original.trim();
+  const suggestion = err.suggestion.trim();
+  if (!original || !suggestion) {
+    return false;
+  }
+
+  if (!/^[A-Za-z][A-Za-z']*$/.test(original)) {
+    return false;
+  }
+
+  const suggestionWord = suggestion.replace(/[,:;]+$/g, "");
+  if (suggestionWord.toLowerCase() !== original.toLowerCase()) {
+    return false;
+  }
+
+  if (suggestionWord === original) {
+    return false;
+  }
+
+  if (!/^[A-Z]/.test(suggestionWord) || !/^[a-z]/.test(original)) {
+    return false;
+  }
+
+  return !isSentenceStartOffset(originalText, offset);
+}
+
+function isInvalidCoordinatedPhraseNumberChange(
+  err: any,
+  originalText: string,
+  offset: number
+): boolean {
+  if (typeof err.original !== "string" || typeof err.suggestion !== "string") {
+    return false;
+  }
+
+  const original = err.original.trim();
+  const suggestion = err.suggestion.trim();
+  if (!original || !suggestion) {
+    return false;
+  }
+
+  if (!/^[A-Za-z]+$/.test(original) || !/^[A-Za-z]+$/.test(suggestion)) {
+    return false;
+  }
+
+  const originalLower = original.toLowerCase();
+  const suggestionLower = suggestion.toLowerCase();
+  if (originalLower === suggestionLower) {
+    return false;
+  }
+
+  if (!isSimpleNumberVariant(originalLower, suggestionLower)) {
+    return false;
+  }
+
+  const before = originalText.slice(Math.max(0, offset - 24), offset);
+  const after = originalText.slice(offset + err.original.length, offset + err.original.length + 24);
+
+  return /\b(?:i|we)\s+and\s+$/i.test(before) || /^\s+and\s+(?:i|we)\b/i.test(after);
+}
+
+function isSimpleNumberVariant(a: string, b: string): boolean {
+  if (a + "s" === b || b + "s" === a) {
+    return true;
+  }
+
+  if (a.endsWith("y") && a.slice(0, -1) + "ies" === b) {
+    return true;
+  }
+
+  if (b.endsWith("y") && b.slice(0, -1) + "ies" === a) {
+    return true;
+  }
+
+  if (a + "es" === b || b + "es" === a) {
+    return true;
+  }
+
+  return false;
+}
+
+function collapseCompetingSpanErrors(errors: GrammarError[]): GrammarError[] {
+  const bestBySpan = new Map<string, GrammarError>();
+
+  for (const error of errors) {
+    const key = `${error.offset}:${error.length}`;
+    const existing = bestBySpan.get(key);
+    if (!existing || compareErrorPriority(error, existing) > 0) {
+      bestBySpan.set(key, error);
+    }
+  }
+
+  return Array.from(bestBySpan.values()).sort((a, b) => a.offset - b.offset);
+}
+
+function compareErrorPriority(a: GrammarError, b: GrammarError): number {
+  const scoreDiff = getErrorPriorityScore(a) - getErrorPriorityScore(b);
+  if (scoreDiff !== 0) {
+    return scoreDiff;
+  }
+
+  const suggestionLengthDiff = a.suggestion.length - b.suggestion.length;
+  if (suggestionLengthDiff !== 0) {
+    return suggestionLengthDiff;
+  }
+
+  return a.original.localeCompare(b.original);
+}
+
+function getErrorPriorityScore(error: GrammarError): number {
+  let score = 0;
+
+  if (!isDerivedError(error)) {
+    score += 100;
+  }
+
+  switch (error.type) {
+    case "spelling":
+      score += 30;
+      break;
+    case "punctuation":
+      score += 20;
+      break;
+    case "grammar":
+      score += 10;
+      break;
+  }
+
+  const originalWords = error.original.match(/[A-Za-z0-9']+/g) || [];
+  const suggestionWords = error.suggestion.match(/[A-Za-z0-9']+/g) || [];
+  if (originalWords.length <= 1 && suggestionWords.length <= 1) {
+    score += 5;
+  }
+
+  if (
+    error.type === "punctuation" &&
+    !originalWords.length &&
+    !suggestionWords.length
+  ) {
+    score += 5;
+  }
+
+  return score;
+}
+
+function isSentenceStartOffset(text: string, offset: number): boolean {
+  let i = offset - 1;
+
+  while (i >= 0 && /\s/.test(text[i])) {
+    i--;
+  }
+
+  while (i >= 0 && /["'“”‘’)\]]/.test(text[i])) {
+    i--;
+  }
+
+  if (i < 0) {
+    return true;
+  }
+
+  return /[.!?]/.test(text[i]);
 }
 
 export function deriveErrorsFromCorrectedText(
@@ -256,7 +564,8 @@ export function deriveErrorsFromCorrectedText(
   return filterUnsafeDerivedErrors(
     filterUnstableDerivedPunctuation(
       mergeAdjacentDerivedErrors(derived, originalText)
-    )
+    ),
+    originalText
   );
 }
 
@@ -585,10 +894,14 @@ function filterUnstableDerivedPunctuation(errors: GrammarError[]): GrammarError[
   });
 }
 
-function filterUnsafeDerivedErrors(errors: GrammarError[]): GrammarError[] {
+function filterUnsafeDerivedErrors(errors: GrammarError[], originalText: string): GrammarError[] {
   return errors.filter((error) => {
-    if (error.explanation !== DERIVED_EXPLANATION) {
+    if (!isDerivedError(error)) {
       return true;
+    }
+
+    if (isInvalidCoordinatedPhraseNumberChange(error, originalText, error.offset)) {
+      return false;
     }
 
     const original = error.original.trim();
@@ -599,13 +912,30 @@ function filterUnsafeDerivedErrors(errors: GrammarError[]): GrammarError[] {
 
     const originalWords = original.match(/[A-Za-z0-9']+/g) || [];
     const suggestionWords = suggestion.match(/[A-Za-z0-9']+/g) || [];
+    const quoteLike = /["“”]/;
+    const hasQuoteLike = quoteLike.test(original) || quoteLike.test(suggestion);
 
     if (error.type === "punctuation") {
-      return true;
+      if (hasQuoteLike && (original.length > 8 || suggestion.length > 8)) {
+        return false;
+      }
+
+      if (originalWords.length > 2 || suggestionWords.length > 2) {
+        return false;
+      }
+
+      return original.length <= 12 && suggestion.length <= 12;
     }
 
     if (error.type === "spelling") {
+      if (hasQuoteLike) {
+        return false;
+      }
       return originalWords.length === 1 && suggestionWords.length === 1;
+    }
+
+    if (hasQuoteLike) {
+      return false;
     }
 
     if (originalWords.length === 0 || suggestionWords.length === 0) {
