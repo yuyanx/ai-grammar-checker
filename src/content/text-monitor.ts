@@ -6,10 +6,12 @@ import { showPopover } from "./popover.js";
 import { showErrorPanel, hideErrorPanel, getErrorPanelElement, isErrorPanelOpenForElement } from "./error-panel.js";
 import { getContentEditableText } from "./contenteditable-snapshot.js";
 import { isLikelyEnglish } from "../shared/language-detect.js";
+import { classifyEditor, EditorClassification } from "./editor-classifier.js";
 
 const elementStates = new WeakMap<HTMLElement, ElementState>();
 const trackedElements = new Set<HTMLElement>();
 const elementSourceIds = new WeakMap<HTMLElement, string>();
+const loggedClassifications = new WeakMap<HTMLElement, string>();
 let debounceMs = 800;
 let enabled = true;
 let configuredCache: boolean | null = null;
@@ -47,11 +49,6 @@ function isReverseFix(element: HTMLElement, error: GrammarError): boolean {
   }
   return true;
 }
-
-// Privacy: skip these input types and field patterns
-const PRIVACY_SKIP_TYPES = new Set(["password", "hidden"]);
-const PRIVACY_SKIP_NAMES = /password|passwd|secret|token|ssn|credit.?card|cvv|cvc|api.?key/i;
-const PRIVACY_SKIP_AUTOCOMPLETE = /cc-|password|one-time-code/i;
 
 // Selectors for standard text inputs and contenteditable elements
 const TEXT_INPUT_SELECTORS = [
@@ -185,8 +182,21 @@ export async function startMonitoring(): Promise<void> {
     const el = findEditableRoot(target);
     if (!el) return;
 
-    if (!elementStates.has(el) && !shouldSkipElement(el)) {
-      console.log("[AI Grammar Checker] focusin detected editable:", el.tagName, el.className, el.getAttribute("contenteditable"), el.getAttribute("role"));
+    const classification = classifyEditor(el);
+    logEditorClassification(el, classification);
+    if (!classification.eligible) {
+      deactivateElement(el);
+      return;
+    }
+
+    if (!elementStates.has(el)) {
+      console.log(
+        "[AI Grammar Checker] focusin detected compose editor:",
+        el.tagName,
+        el.className,
+        el.getAttribute("contenteditable"),
+        el.getAttribute("role")
+      );
       attachListeners(el);
       trackedElements.add(el);
     }
@@ -289,10 +299,11 @@ function scanForElements(root: HTMLElement): void {
 
   for (const el of elements) {
     if (el instanceof HTMLElement && !elementStates.has(el)) {
-      // Privacy check: skip sensitive fields
-      if (shouldSkipElement(el)) continue;
       // Skip non-editable elements (e.g. role=textbox that isn't actually editable)
       if (!isEditableElement(el)) continue;
+      const classification = classifyEditor(el);
+      logEditorClassification(el, classification);
+      if (!classification.eligible) continue;
       attachListeners(el);
       trackedElements.add(el);
     }
@@ -311,23 +322,6 @@ function walkShadowRoots(root: HTMLElement | ShadowRoot, out: HTMLElement[]): vo
       walkShadowRoots(sr, out);
     }
   }
-}
-
-/**
- * Privacy filter: skip password fields, credit card inputs, etc.
- */
-function shouldSkipElement(element: HTMLElement): boolean {
-  if (element instanceof HTMLInputElement) {
-    if (PRIVACY_SKIP_TYPES.has(element.type)) return true;
-    if (PRIVACY_SKIP_NAMES.test(element.name || "")) return true;
-    if (PRIVACY_SKIP_NAMES.test(element.id || "")) return true;
-    if (PRIVACY_SKIP_AUTOCOMPLETE.test(element.autocomplete || "")) return true;
-  }
-  if (element instanceof HTMLTextAreaElement) {
-    if (PRIVACY_SKIP_NAMES.test(element.name || "")) return true;
-    if (PRIVACY_SKIP_NAMES.test(element.id || "")) return true;
-  }
-  return false;
 }
 
 function attachListeners(element: HTMLElement): void {
@@ -712,6 +706,25 @@ function clearFocusOutTimer(state: ElementState): void {
     clearTimeout(state.focusOutTimer);
     state.focusOutTimer = null;
   }
+}
+
+function logEditorClassification(element: HTMLElement, classification: EditorClassification): void {
+  const signature = `${classification.eligible}:${classification.intent}:${classification.reason}`;
+  if (loggedClassifications.get(element) === signature) return;
+  loggedClassifications.set(element, signature);
+  console.log(
+    `[AI Grammar Checker] editor classification: eligible=${classification.eligible} intent=${classification.intent} reason=${classification.reason}`
+  );
+}
+
+function deactivateElement(element: HTMLElement): void {
+  const state = elementStates.get(element);
+  if (!state) return;
+  clearErrors(element);
+  removeWidget(element);
+  cleanupElementState(element);
+  trackedElements.delete(element);
+  elementStates.delete(element);
 }
 
 function getActiveTrackedElement(): HTMLElement | null {
