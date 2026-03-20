@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.12.0
+
+### Features
+- Add a Phase 4 editor-intent classifier so activation is limited to real composition surfaces instead of broad editable-field matching
+- Suppress utility inputs such as search, branch, query, picker, and Ask Gmail fields before listener attachment, badge priming, or grammar requests
+- Keep compose activation for supported multiline writing surfaces such as Gmail compose, Grok chat, and social post/comment editors
+
 ## v1.11.1
 
 ### Bug Fixes
