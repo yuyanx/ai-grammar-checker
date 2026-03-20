@@ -18,6 +18,14 @@ export function isErrorPanelOpen(): boolean {
   return currentPanel !== null;
 }
 
+export function isErrorPanelOpenForElement(element: HTMLElement): boolean {
+  return currentPanel !== null && currentElement === element;
+}
+
+export function getErrorPanelElement(): HTMLElement | null {
+  return currentElement;
+}
+
 export function showErrorPanel(
   element: HTMLElement,
   errors: GrammarError[],

@@ -11,6 +11,8 @@ interface OriginalToken {
   end: number;
 }
 
+const DERIVED_EXPLANATION = "Derived from the corrected text returned by the AI.";
+
 export function parseOpenAIResponse(responseJson: any): ParsedResponse {
   try {
     const content = getOpenAIContent(responseJson);
@@ -251,8 +253,10 @@ export function deriveErrorsFromCorrectedText(
     if (tail) derived.push(tail);
   }
 
-  return filterUnstableDerivedPunctuation(
-    mergeAdjacentDerivedErrors(derived, originalText)
+  return filterUnsafeDerivedErrors(
+    filterUnstableDerivedPunctuation(
+      mergeAdjacentDerivedErrors(derived, originalText)
+    )
   );
 }
 
@@ -432,7 +436,7 @@ function buildReplacementError(
     offset,
     length: original.length,
     type: classifyDerivedErrorType(original, suggestion),
-    explanation: "Derived from the corrected text returned by the AI.",
+    explanation: DERIVED_EXPLANATION,
   };
 }
 
@@ -453,7 +457,7 @@ function buildSingleReplacement(originalText: string, correctedText: string): Gr
     offset: prefixLength,
     length: original.length,
     type: classifyDerivedErrorType(original, suggestion),
-    explanation: "Derived from the corrected text returned by the AI.",
+    explanation: DERIVED_EXPLANATION,
   }];
 }
 
@@ -495,6 +499,8 @@ function classifyDerivedErrorType(
   if (
     originalWords.length === suggestionWords.length &&
     originalWords.length === 1 &&
+    originalWords[0] &&
+    suggestionWords[0] &&
     editDistance(originalWords[0], suggestionWords[0]) <= 2
   ) {
     return "spelling";
@@ -557,7 +563,7 @@ function mergeAdjacentDerivedErrors(
 
 function filterUnstableDerivedPunctuation(errors: GrammarError[]): GrammarError[] {
   return errors.filter((error) => {
-    if (error.explanation !== "Derived from the corrected text returned by the AI.") {
+    if (error.explanation !== DERIVED_EXPLANATION) {
       return true;
     }
     if (error.type !== "punctuation") {
@@ -576,5 +582,61 @@ function filterUnstableDerivedPunctuation(errors: GrammarError[]): GrammarError[
     // Derived punctuation-only toggles around the same word are too unstable for Fix All.
     // Keep them out of the list and rely on authoritative model-returned errors instead.
     return originalMarks === suggestionMarks;
+  });
+}
+
+function filterUnsafeDerivedErrors(errors: GrammarError[]): GrammarError[] {
+  return errors.filter((error) => {
+    if (error.explanation !== DERIVED_EXPLANATION) {
+      return true;
+    }
+
+    const original = error.original.trim();
+    const suggestion = error.suggestion.trim();
+    if (!original || !suggestion) {
+      return false;
+    }
+
+    const originalWords = original.match(/[A-Za-z0-9']+/g) || [];
+    const suggestionWords = suggestion.match(/[A-Za-z0-9']+/g) || [];
+
+    if (error.type === "punctuation") {
+      return true;
+    }
+
+    if (error.type === "spelling") {
+      return originalWords.length === 1 && suggestionWords.length === 1;
+    }
+
+    if (originalWords.length === 0 || suggestionWords.length === 0) {
+      return false;
+    }
+
+    if (originalWords.length > 4 || suggestionWords.length > 4) {
+      return false;
+    }
+
+    if (Math.abs(originalWords.length - suggestionWords.length) > 1) {
+      return false;
+    }
+
+    if (original.length > 32 || suggestion.length > 32) {
+      return false;
+    }
+
+    if (/[.!?]/.test(original) || /[.!?]/.test(suggestion)) {
+      return false;
+    }
+
+    const lowerOriginal = original.toLowerCase();
+    const lowerSuggestion = suggestion.toLowerCase();
+    if (
+      (originalWords.length > 1 || suggestionWords.length > 1) &&
+      (lowerOriginal.includes(lowerSuggestion) || lowerSuggestion.includes(lowerOriginal))
+    ) {
+      return false;
+    }
+
+    return true;
   });
 }

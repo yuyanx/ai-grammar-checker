@@ -1,5 +1,32 @@
 # Changelog
 
+## v1.11.1
+
+### Bug Fixes
+- Stop surfacing broad unsafe grammar replacements from corrected-text fallback diffs, so derived suggestions no longer collapse whole phrases into nonsense edits
+- Make chunked checks return deduped per-chunk validated errors as the primary result and keep whole-text corrected-text diffs as validation only
+
+## v1.11.0
+
+### Features
+- Parallelize long-draft chunk checks with a small concurrency cap while preserving deterministic merge order and stable final responses
+- Add a dedicated per-chunk cache so repeated long-draft edits can reuse unchanged chunk results instead of rechecking every chunk
+- Include punctuation-rule cache versioning in grammar cache keys so local punctuation updates invalidate stale cached results
+
+## v1.10.0
+
+### Features
+- Keep long-draft checks in a single stable active-editor checking lifecycle with stale-response suppression
+- Limit transient badges to the active editor, add focusout cleanup, and stop scroll/resize from rebuilding unchanged widget DOM
+- Refine compact/full badge presentation for chat-style editors and add underline collision filtering against the widget area
+- Clear stale underlines immediately on text change and gate underline rendering with per-editor generations
+
+## v1.9.0
+
+### Features
+- Add deterministic local punctuation detection for objective malformed patterns such as `,.`, `.,`, duplicated terminal punctuation, space-before-punctuation, and missing spaces after sentence-ending punctuation
+- Add English-only gating in both the content script and service worker so clearly non-English input is suppressed before any provider request and does not show ready/checking badge states
+
 ## v1.8.10
 
 ### Notes

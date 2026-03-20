@@ -2,6 +2,7 @@ import { getOrCreateContainer, getShadowRoot, getShadowHost } from "./shadow-hos
 import { isDarkMode } from "./dark-mode.js";
 
 export type WidgetState = "idle" | "ready" | "checking" | "errors" | "clean" | "error";
+type WidgetPresentation = "compact" | "full";
 
 const widgetMap = new WeakMap<HTMLElement, string>();
 const widgetElements = new Set<HTMLElement>();
@@ -10,6 +11,11 @@ const widgetStates = new WeakMap<HTMLElement, {
   errorCount: number;
   onClickErrors?: () => void;
   hideAt?: number;
+}>();
+const widgetRenderMeta = new WeakMap<HTMLElement, {
+  state: WidgetState;
+  errorCount: number;
+  isCompact: boolean;
 }>();
 let widgetCounter = 0;
 const VIEWPORT_MARGIN = 8;
@@ -50,10 +56,18 @@ export function updateWidget(
 }
 
 export function refreshWidget(element: HTMLElement): void {
-  renderWidget(element);
+  renderWidget(element, true);
 }
 
-function renderWidget(element: HTMLElement): void {
+export function getWidgetRect(element: HTMLElement): DOMRect | null {
+  const containerId = widgetMap.get(element);
+  if (!containerId) return null;
+  const container = getOrCreateContainer(containerId);
+  const widget = container.firstElementChild;
+  return widget instanceof HTMLElement ? widget.getBoundingClientRect() : null;
+}
+
+function renderWidget(element: HTMLElement, positionOnly = false): void {
   const widgetState = widgetStates.get(element);
   if (!widgetState) return;
 
@@ -61,36 +75,60 @@ function renderWidget(element: HTMLElement): void {
   console.log("[AI Grammar Checker] updateWidget called, state:", state, "errorCount:", errorCount, "hasCallback:", !!onClickErrors);
   const containerId = getWidgetContainerId(element);
   const container = getOrCreateContainer(containerId);
-  container.innerHTML = "";
 
   // Don't show for idle state
-  if (state === "idle") return;
-  if (state === "clean" && hideAt && Date.now() >= hideAt) return;
+  if (state === "idle" || (state === "clean" && hideAt && Date.now() >= hideAt)) {
+    container.innerHTML = "";
+    widgetRenderMeta.delete(element);
+    return;
+  }
 
   const rect = element.getBoundingClientRect();
-  const isCompact = rect.height < 44;
+  const textRect = getCompactTextRect(element, rect);
+  const presentation = getWidgetPresentation(element, rect, textRect);
+  const isCompact = presentation === "compact";
   const compactAnchor = isCompact ? getCompactAnchor(element, rect) : null;
   const anchorRect = compactAnchor?.rect || rect;
-  const compactTextRect = isCompact ? getCompactTextRect(element, rect) : rect;
+  const compactTextRect = isCompact ? textRect : rect;
 
   // Don't show widget for hidden/invisible elements.
   // For compact editors like Instagram, the editable span can be tiny even when the
   // full composer row is visible, so gate on the chosen anchor rect instead.
-  if (anchorRect.width < 50 || anchorRect.height < 20) return;
+  if (anchorRect.width < 50 || anchorRect.height < 20) {
+    container.innerHTML = "";
+    widgetRenderMeta.delete(element);
+    return;
+  }
 
-  const widget = document.createElement("div");
   const dark = isDarkMode();
 
   // Use smaller widget for compact editors (e.g. comment boxes)
   const size = isCompact ? getCompactWidgetSize(state) : 28;
   const inset = isCompact ? COMPACT_INSET : 6;
 
-  widget.style.position = "fixed";
   const position = isCompact && compactAnchor
     ? getCompactWidgetPosition(element, compactTextRect, compactAnchor, size)
     : getCornerWidgetPosition(anchorRect, size, inset);
-  widget.style.top = `${position.top}px`;
-  widget.style.left = `${position.left}px`;
+  const existing = container.firstElementChild;
+  const lastRendered = widgetRenderMeta.get(element);
+  if (
+    positionOnly &&
+    existing instanceof HTMLElement &&
+    lastRendered &&
+    lastRendered.state === state &&
+    lastRendered.errorCount === errorCount &&
+    lastRendered.isCompact === isCompact
+  ) {
+    positionWidgetElement(existing, position);
+    positionWidgetTooltip(existing);
+    return;
+  }
+
+  container.innerHTML = "";
+
+  const widget = document.createElement("div");
+  widget.style.position = "fixed";
+  positionWidgetElement(widget, position);
   // Build class name including compact modifier
   const compactClass = isCompact ? " grammar-widget--compact" : "";
 
@@ -132,6 +170,7 @@ function renderWidget(element: HTMLElement): void {
       const current = widgetStates.get(element);
       if (!current || current.state !== "clean" || current.hideAt !== hideAt) return;
       widgetStates.set(element, { state: "idle", errorCount: 0 });
+      widgetRenderMeta.delete(element);
       widget.style.opacity = "0";
       widget.style.transition = "opacity 0.3s";
       setTimeout(() => container.innerHTML = "", 300);
@@ -147,6 +186,7 @@ function renderWidget(element: HTMLElement): void {
       const current = widgetStates.get(element);
       if (!current || current.state !== "error") return;
       widgetStates.set(element, { state: "idle", errorCount: 0 });
+      widgetRenderMeta.delete(element);
       widget.style.opacity = "0";
       widget.style.transition = "opacity 0.3s";
       setTimeout(() => container.innerHTML = "", 300);
@@ -154,11 +194,13 @@ function renderWidget(element: HTMLElement): void {
   }
 
   container.appendChild(widget);
+  widgetRenderMeta.set(element, { state, errorCount, isCompact });
   positionWidgetTooltip(widget);
 }
 
 export function removeWidget(element: HTMLElement): void {
   widgetStates.set(element, { state: "idle", errorCount: 0 });
+  widgetRenderMeta.delete(element);
   const containerId = widgetMap.get(element);
   if (containerId) {
     const container = getOrCreateContainer(containerId);
@@ -178,9 +220,9 @@ export function removeAllWidgets(): void {
   widgetElements.clear();
 }
 
-export function clearTransientWidgetsExcept(activeElement: HTMLElement): void {
+export function clearTransientWidgetsExcept(activeElement: HTMLElement | null): void {
   for (const element of Array.from(widgetElements)) {
-    if (element === activeElement) continue;
+    if (activeElement && element === activeElement) continue;
     if (!element.isConnected) {
       widgetElements.delete(element);
       continue;
@@ -188,9 +230,10 @@ export function clearTransientWidgetsExcept(activeElement: HTMLElement): void {
 
     const state = widgetStates.get(element);
     if (!state) continue;
-    if (state.state === "errors" || state.state === "error") continue;
+    if (state.state === "errors") continue;
 
     widgetStates.set(element, { state: "idle", errorCount: 0 });
+    widgetRenderMeta.delete(element);
     const containerId = widgetMap.get(element);
     if (!containerId) continue;
     const container = getOrCreateContainer(containerId);
@@ -213,9 +256,46 @@ function getCornerWidgetPosition(rect: DOMRect, size: number, inset: number): { 
   return { top, left };
 }
 
+function positionWidgetElement(widget: HTMLElement, position: { top: number; left: number }): void {
+  widget.style.top = `${position.top}px`;
+  widget.style.left = `${position.left}px`;
+}
+
 function getCompactWidgetSize(state: WidgetState): number {
   if (state === "errors" || state === "ready") return 12;
   return 18;
+}
+
+function getWidgetPresentation(
+  element: HTMLElement,
+  rect: DOMRect,
+  textRect: DOMRect
+): WidgetPresentation {
+  if (element instanceof HTMLInputElement && !(element instanceof HTMLTextAreaElement)) {
+    return "compact";
+  }
+  if (rect.height < 44) {
+    return "compact";
+  }
+
+  const fullWouldOverlapText = doesFullWidgetOverlapText(rect, textRect);
+  if (rect.height >= 100) {
+    return fullWouldOverlapText ? "compact" : "full";
+  }
+
+  const verticalSpace = rect.bottom - textRect.bottom;
+  if (verticalSpace < 36) {
+    return "compact";
+  }
+
+  return fullWouldOverlapText ? "compact" : "full";
+}
+
+function doesFullWidgetOverlapText(rect: DOMRect, textRect: DOMRect): boolean {
+  if (textRect === rect) return false;
+  const position = getCornerWidgetPosition(rect, 28, 6);
+  const badgeRect = new DOMRect(position.left, position.top, 28, 28);
+  return rectsOverlap(badgeRect, inflateRect(textRect, 8, 6));
 }
 
 function formatErrorCount(errorCount: number): string {

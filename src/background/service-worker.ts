@@ -3,6 +3,8 @@ import { getSettings } from "../shared/storage.js";
 import { buildGrammarCheckPrompt, buildGrammarRecheckPrompt } from "../shared/prompts.js";
 import { parseOpenAIResponse, parseGeminiResponse, validateErrors, deriveErrorsFromCorrectedText, ParsedResponse } from "../shared/api-parsers.js";
 import { OPENAI_API_URL, GEMINI_API_URL, DEFAULT_OPENAI_MODEL, MAX_TEXT_LENGTH, PROMPT_CACHE_VERSION } from "../shared/constants.js";
+import { findLocalPunctuationErrors, PUNCTUATION_RULES_VERSION } from "../shared/punctuation-rules.js";
+import { isLikelyEnglish } from "../shared/language-detect.js";
 
 interface TextChunk {
   text: string;
@@ -39,6 +41,10 @@ chrome.storage.onChanged.addListener((changes) => {
 const responseCache = new Map<string, { errors: GrammarError[]; correctedText?: string; timestamp: number }>();
 const CACHE_TTL = 60_000; // 1 minute
 const CACHE_MAX = 50;
+const chunkResponseCache = new Map<string, { parsed: ParsedResponse; errors: GrammarError[]; timestamp: number }>();
+const CHUNK_CACHE_TTL = 5 * 60_000; // 5 minutes
+const CHUNK_CACHE_MAX = 100;
+const CHUNK_CONCURRENCY = 2;
 
 function getCached(cacheKey: string): { errors: GrammarError[]; correctedText?: string } | null {
   const entry = responseCache.get(cacheKey);
@@ -58,6 +64,33 @@ function setCache(cacheKey: string, errors: GrammarError[], correctedText?: stri
     responseCache.delete(oldest);
   }
   responseCache.set(cacheKey, { errors, correctedText, timestamp: Date.now() });
+}
+
+function getCachedChunk(cacheKey: string): { parsed: ParsedResponse; errors: GrammarError[] } | null {
+  const entry = chunkResponseCache.get(cacheKey);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CHUNK_CACHE_TTL) {
+    chunkResponseCache.delete(cacheKey);
+    return null;
+  }
+  chunkResponseCache.delete(cacheKey);
+  chunkResponseCache.set(cacheKey, entry);
+  return {
+    parsed: cloneParsedResponse(entry.parsed),
+    errors: cloneErrors(entry.errors),
+  };
+}
+
+function setChunkCache(cacheKey: string, parsed: ParsedResponse, errors: GrammarError[]): void {
+  if (chunkResponseCache.size >= CHUNK_CACHE_MAX) {
+    const oldest = chunkResponseCache.keys().next().value!;
+    chunkResponseCache.delete(oldest);
+  }
+  chunkResponseCache.set(cacheKey, {
+    parsed: cloneParsedResponse(parsed),
+    errors: cloneErrors(errors),
+    timestamp: Date.now(),
+  });
 }
 
 // Track in-flight requests so we can abort superseded ones
@@ -124,6 +157,17 @@ async function handleCheckGrammar(
 ): Promise<CheckResponse> {
   const settings = await getCachedSettings();
   const text = request.text.substring(0, MAX_TEXT_LENGTH);
+  const chunked = shouldChunkText(text);
+
+  if (!isLikelyEnglish(text)) {
+    return {
+      type: "CHECK_GRAMMAR_RESULT",
+      requestId: request.requestId,
+      errors: [],
+      chunked,
+    };
+  }
+
   const cacheKey = buildCacheKey(text, settings);
 
   // Check cache first
@@ -133,7 +177,7 @@ async function handleCheckGrammar(
     if (!settings.checkGrammar) errors = errors.filter((e) => e.type !== "grammar");
     if (!settings.checkSpelling) errors = errors.filter((e) => e.type !== "spelling");
     if (!settings.checkPunctuation) errors = errors.filter((e) => e.type !== "punctuation");
-    return { type: "CHECK_GRAMMAR_RESULT", requestId: request.requestId, errors, correctedText: cached.correctedText };
+    return { type: "CHECK_GRAMMAR_RESULT", requestId: request.requestId, errors, correctedText: cached.correctedText, chunked };
   }
 
   // Abort any previous in-flight request from the same tab
@@ -147,7 +191,7 @@ async function handleCheckGrammar(
   let errors: GrammarError[];
 
   try {
-    if (shouldChunkText(text)) {
+    if (chunked) {
       ({ parsed, errors } = await checkTextInChunks(text, settings, abortController.signal));
     } else {
       ({ parsed, errors } = await checkSingleText(text, settings, abortController.signal));
@@ -158,6 +202,7 @@ async function handleCheckGrammar(
     }
   }
 
+  errors = mergeLocalPunctuationErrors(errors, findLocalPunctuationErrors(text));
   console.log("[AI Grammar Checker] Validated errors:", errors.length, JSON.stringify(errors));
 
   // Cache the unfiltered result
@@ -173,6 +218,7 @@ async function handleCheckGrammar(
     requestId: request.requestId,
     errors,
     correctedText: parsed.correctedText,
+    chunked,
   };
 }
 
@@ -228,29 +274,64 @@ async function checkTextInChunks(
   const chunks = splitTextIntoChunks(text);
   console.log("[AI Grammar Checker] Chunking long text into", chunks.length, "chunks");
 
+  const chunkResults = new Array<{ parsed: ParsedResponse; errors: GrammarError[] }>(chunks.length);
+
+  for (let batchStart = 0; batchStart < chunks.length; batchStart += CHUNK_CONCURRENCY) {
+    if (signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+
+    const batch = chunks
+      .slice(batchStart, batchStart + CHUNK_CONCURRENCY)
+      .map((chunk, offset) => ({ chunk, index: batchStart + offset }));
+
+    const batchResults = await Promise.all(batch.map(async ({ chunk, index }) => ({
+      index,
+      result: await checkChunkWithCache(chunk, settings, signal),
+    })));
+
+    for (const { index, result } of batchResults) {
+      chunkResults[index] = result;
+    }
+  }
+
   const mergedErrors: GrammarError[] = [];
   let correctedText = "";
 
-  for (const chunk of chunks) {
-    const { parsed, errors } = await checkSingleText(chunk.text, settings, signal);
-    mergedErrors.push(...errors.map((error) => ({
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const chunkResult = chunkResults[i];
+    if (!chunkResult) continue;
+
+    mergedErrors.push(...chunkResult.errors.map((error) => ({
       ...error,
       offset: error.offset + chunk.start,
     })));
-    correctedText += (parsed.correctedText && parsed.correctedText.trim().length > 0)
-      ? parsed.correctedText
+    correctedText += (chunkResult.parsed.correctedText && chunkResult.parsed.correctedText.trim().length > 0)
+      ? chunkResult.parsed.correctedText
       : chunk.text;
   }
 
+  const primaryMergedErrors = dedupeOverlappingErrors(mergedErrors);
   const normalizedCorrectedText = normalizeCorrectedText(text, correctedText);
-  const normalizedMergedErrors = deriveErrorsFromCorrectedText(text, normalizedCorrectedText);
+  const validationErrors = deriveErrorsFromCorrectedText(text, normalizedCorrectedText);
+  const additionalDerivedErrors = validationErrors.filter((validationError) =>
+    !primaryMergedErrors.some((mergedError) => errorsEquivalent(mergedError, validationError))
+  );
+  if (additionalDerivedErrors.length > 0) {
+    console.log(
+      "[AI Grammar Checker] Chunk merge validation found additional derived errors:",
+      additionalDerivedErrors.length,
+      JSON.stringify(additionalDerivedErrors)
+    );
+  }
 
   return {
     parsed: {
-      errors: normalizedMergedErrors,
+      errors: primaryMergedErrors,
       correctedText: normalizedCorrectedText,
     },
-    errors: normalizedMergedErrors,
+    errors: primaryMergedErrors,
   };
 }
 
@@ -397,7 +478,106 @@ function buildCacheKey(
     spelling: settings.checkSpelling,
     punctuation: settings.checkPunctuation,
     promptVersion: PROMPT_CACHE_VERSION,
+    punctuationRulesVersion: PUNCTUATION_RULES_VERSION,
   });
+}
+
+function buildChunkCacheKey(
+  chunk: TextChunk,
+  settings: Awaited<ReturnType<typeof getSettings>>
+): string {
+  return JSON.stringify({
+    text: chunk.text,
+    start: chunk.start,
+    end: chunk.end,
+    provider: settings.provider,
+    openaiModel: settings.provider === "openai" ? DEFAULT_OPENAI_MODEL : undefined,
+    grammar: settings.checkGrammar,
+    spelling: settings.checkSpelling,
+    punctuation: settings.checkPunctuation,
+    promptVersion: PROMPT_CACHE_VERSION,
+    punctuationRulesVersion: PUNCTUATION_RULES_VERSION,
+  });
+}
+
+async function checkChunkWithCache(
+  chunk: TextChunk,
+  settings: Awaited<ReturnType<typeof getSettings>>,
+  signal?: AbortSignal
+): Promise<{ parsed: ParsedResponse; errors: GrammarError[] }> {
+  const cacheKey = buildChunkCacheKey(chunk, settings);
+  const cached = getCachedChunk(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const result = await checkSingleText(chunk.text, settings, signal);
+  setChunkCache(cacheKey, result.parsed, result.errors);
+  return {
+    parsed: cloneParsedResponse(result.parsed),
+    errors: cloneErrors(result.errors),
+  };
+}
+
+function mergeLocalPunctuationErrors(
+  apiErrors: GrammarError[],
+  localErrors: GrammarError[]
+): GrammarError[] {
+  if (localErrors.length === 0) return apiErrors;
+
+  const merged = [...localErrors];
+
+  for (const apiError of apiErrors) {
+    const overlappedLocal = localErrors.find((localError) => rangesOverlap(localError, apiError));
+    if (
+      overlappedLocal &&
+      (apiError.type === "punctuation" || apiError.suggestion === overlappedLocal.suggestion)
+    ) {
+      continue;
+    }
+    merged.push(apiError);
+  }
+
+  return merged.sort((a, b) => a.offset - b.offset);
+}
+
+function rangesOverlap(a: GrammarError, b: GrammarError): boolean {
+  const aEnd = a.offset + Math.max(a.length, 1);
+  const bEnd = b.offset + Math.max(b.length, 1);
+  return a.offset < bEnd && b.offset < aEnd;
+}
+
+function dedupeOverlappingErrors(errors: GrammarError[]): GrammarError[] {
+  const deduped: GrammarError[] = [];
+
+  for (const error of [...errors].sort((a, b) => a.offset - b.offset || a.length - b.length)) {
+    if (deduped.some((existing) => errorsEquivalent(existing, error))) {
+      continue;
+    }
+    deduped.push(error);
+  }
+
+  return deduped;
+}
+
+function errorsEquivalent(a: GrammarError, b: GrammarError): boolean {
+  return (
+    rangesOverlap(a, b) &&
+    a.original === b.original &&
+    a.suggestion === b.suggestion &&
+    a.type === b.type
+  );
+}
+
+function cloneParsedResponse(parsed: ParsedResponse): ParsedResponse {
+  return {
+    errors: cloneErrors(parsed.errors),
+    correctedText: parsed.correctedText,
+  };
+}
+
+function cloneErrors(errors: GrammarError[]): GrammarError[] {
+  return errors.map((error) => ({ ...error }));
 }
 
 async function callOpenAI(

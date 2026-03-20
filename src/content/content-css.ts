@@ -45,7 +45,7 @@ export const CONTENT_CSS = `
     background-repeat: repeat-x;
     background-size: 4px 4px;
     background-position: bottom;
-    z-index: 2147483647;
+    z-index: 2147483645;
     animation: grammar-underline-in 0.3s ease-out;
     transition: opacity 0.2s, height 0.15s;
   }
@@ -239,7 +239,7 @@ export const CONTENT_CSS = `
   /* ===== FLOATING STATUS WIDGET (Grammarly-style) ===== */
   .grammar-widget {
     position: fixed;
-    z-index: 2147483647;
+    z-index: 2147483646;
     pointer-events: auto;
     width: 28px;
     height: 28px;
