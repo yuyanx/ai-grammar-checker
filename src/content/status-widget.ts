@@ -1,20 +1,28 @@
 import { getOrCreateContainer, getShadowRoot, getShadowHost } from "./shadow-host.js";
 import { isDarkMode } from "./dark-mode.js";
 
-export type WidgetState = "idle" | "checking" | "errors" | "clean";
+export type WidgetState = "idle" | "ready" | "checking" | "errors" | "clean" | "error";
+type WidgetPresentation = "compact" | "full";
 
 const widgetMap = new WeakMap<HTMLElement, string>();
+const widgetElements = new Set<HTMLElement>();
 const widgetStates = new WeakMap<HTMLElement, {
   state: WidgetState;
   errorCount: number;
   onClickErrors?: () => void;
   hideAt?: number;
 }>();
+const widgetRenderMeta = new WeakMap<HTMLElement, {
+  state: WidgetState;
+  errorCount: number;
+  isCompact: boolean;
+}>();
 let widgetCounter = 0;
 const VIEWPORT_MARGIN = 8;
 const COMPACT_INSET = 8;
 const COMPACT_SEARCH_STEP = 2;
 const COMPACT_ACTION_GAP = 16;
+const COMPACT_OUTSIDE_GAP = 6;
 
 /**
  * Show or update the floating status widget near a text field.
@@ -26,20 +34,40 @@ export function updateWidget(
   errorCount: number = 0,
   onClickErrors?: () => void
 ): void {
+  const current = widgetStates.get(element);
+  if (
+    current &&
+    current.state === state &&
+    current.errorCount === errorCount &&
+    current.onClickErrors === onClickErrors &&
+    state !== "clean"
+  ) {
+    return;
+  }
+
   widgetStates.set(element, {
     state,
     errorCount,
     onClickErrors,
     hideAt: state === "clean" ? Date.now() + 3000 : undefined,
   });
+  widgetElements.add(element);
   renderWidget(element);
 }
 
 export function refreshWidget(element: HTMLElement): void {
-  renderWidget(element);
+  renderWidget(element, true);
 }
 
-function renderWidget(element: HTMLElement): void {
+export function getWidgetRect(element: HTMLElement): DOMRect | null {
+  const containerId = widgetMap.get(element);
+  if (!containerId) return null;
+  const container = getOrCreateContainer(containerId);
+  const widget = container.firstElementChild;
+  return widget instanceof HTMLElement ? widget.getBoundingClientRect() : null;
+}
+
+function renderWidget(element: HTMLElement, positionOnly = false): void {
   const widgetState = widgetStates.get(element);
   if (!widgetState) return;
 
@@ -47,37 +75,60 @@ function renderWidget(element: HTMLElement): void {
   console.log("[AI Grammar Checker] updateWidget called, state:", state, "errorCount:", errorCount, "hasCallback:", !!onClickErrors);
   const containerId = getWidgetContainerId(element);
   const container = getOrCreateContainer(containerId);
-  container.innerHTML = "";
 
   // Don't show for idle state
-  if (state === "idle") return;
-  if (state === "clean" && hideAt && Date.now() >= hideAt) return;
+  if (state === "idle" || (state === "clean" && hideAt && Date.now() >= hideAt)) {
+    container.innerHTML = "";
+    widgetRenderMeta.delete(element);
+    return;
+  }
 
   const rect = element.getBoundingClientRect();
-  const isCompact = rect.height < 44;
+  const textRect = getCompactTextRect(element, rect);
+  const presentation = getWidgetPresentation(element, rect, textRect);
+  const isCompact = presentation === "compact";
   const compactAnchor = isCompact ? getCompactAnchor(element, rect) : null;
   const anchorRect = compactAnchor?.rect || rect;
-  const compactTextRect = isCompact ? getCompactTextRect(element, rect) : rect;
+  const compactTextRect = isCompact ? textRect : rect;
 
   // Don't show widget for hidden/invisible elements.
   // For compact editors like Instagram, the editable span can be tiny even when the
   // full composer row is visible, so gate on the chosen anchor rect instead.
-  if (anchorRect.width < 50 || anchorRect.height < 20) return;
+  if (anchorRect.width < 50 || anchorRect.height < 20) {
+    container.innerHTML = "";
+    widgetRenderMeta.delete(element);
+    return;
+  }
 
-  const widget = document.createElement("div");
   const dark = isDarkMode();
 
   // Use smaller widget for compact editors (e.g. comment boxes)
   const size = isCompact ? getCompactWidgetSize(state) : 28;
   const inset = isCompact ? COMPACT_INSET : 6;
 
-  widget.style.position = "fixed";
   const position = isCompact && compactAnchor
     ? getCompactWidgetPosition(element, compactTextRect, compactAnchor, size)
     : getCornerWidgetPosition(anchorRect, size, inset);
-  widget.style.top = `${position.top}px`;
-  widget.style.left = `${position.left}px`;
+  const existing = container.firstElementChild;
+  const lastRendered = widgetRenderMeta.get(element);
+  if (
+    positionOnly &&
+    existing instanceof HTMLElement &&
+    lastRendered &&
+    lastRendered.state === state &&
+    lastRendered.errorCount === errorCount &&
+    lastRendered.isCompact === isCompact
+  ) {
+    positionWidgetElement(existing, position);
+    positionWidgetTooltip(existing);
+    return;
+  }
 
+  container.innerHTML = "";
+
+  const widget = document.createElement("div");
+  widget.style.position = "fixed";
+  positionWidgetElement(widget, position);
   // Build class name including compact modifier
   const compactClass = isCompact ? " grammar-widget--compact" : "";
 
@@ -87,14 +138,21 @@ function renderWidget(element: HTMLElement): void {
       <div class="grammar-widget__spinner"></div>
       <div class="grammar-widget__tooltip${dark ? " grammar-widget__tooltip--dark" : ""}">Checking...</div>
     `;
+  } else if (state === "ready") {
+    const dotClass = isCompact ? " grammar-widget--compact-dot" : "";
+    widget.className = `grammar-widget grammar-widget--ready${compactClass}${dotClass}`;
+    widget.innerHTML = `
+      <div class="grammar-widget__tooltip${dark ? " grammar-widget__tooltip--dark" : ""}">Ready to check</div>
+    `;
   } else if (state === "errors") {
     const dotClass = isCompact ? " grammar-widget--compact-dot" : "";
-    widget.className = `grammar-widget grammar-widget--errors${compactClass}${dotClass}`;
+    const wideCountClass = !isCompact && errorCount >= 10 ? " grammar-widget--wide-count" : "";
+    widget.className = `grammar-widget grammar-widget--errors${compactClass}${dotClass}${wideCountClass}`;
     widget.innerHTML = `
       <div class="grammar-widget__tooltip${dark ? " grammar-widget__tooltip--dark" : ""}">${errorCount} issue${errorCount !== 1 ? "s" : ""} found</div>
     `;
     if (!isCompact) {
-      widget.insertAdjacentHTML("afterbegin", `<span class="grammar-widget__count">${errorCount > 9 ? "9+" : errorCount}</span>`);
+      widget.insertAdjacentHTML("afterbegin", `<span class="grammar-widget__count">${formatErrorCount(errorCount)}</span>`);
     }
     widget.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -112,22 +170,43 @@ function renderWidget(element: HTMLElement): void {
       const current = widgetStates.get(element);
       if (!current || current.state !== "clean" || current.hideAt !== hideAt) return;
       widgetStates.set(element, { state: "idle", errorCount: 0 });
+      widgetRenderMeta.delete(element);
       widget.style.opacity = "0";
       widget.style.transition = "opacity 0.3s";
       setTimeout(() => container.innerHTML = "", 300);
     }, 3000);
+  } else if (state === "error") {
+    widget.className = `grammar-widget grammar-widget--error${compactClass}`;
+    widget.innerHTML = `
+      <span class="grammar-widget__error-icon">!</span>
+      <div class="grammar-widget__tooltip${dark ? " grammar-widget__tooltip--dark" : ""}">Check failed — will retry</div>
+    `;
+    // Auto-hide after 4 seconds
+    setTimeout(() => {
+      const current = widgetStates.get(element);
+      if (!current || current.state !== "error") return;
+      widgetStates.set(element, { state: "idle", errorCount: 0 });
+      widgetRenderMeta.delete(element);
+      widget.style.opacity = "0";
+      widget.style.transition = "opacity 0.3s";
+      setTimeout(() => container.innerHTML = "", 300);
+    }, 4000);
   }
 
   container.appendChild(widget);
+  widgetRenderMeta.set(element, { state, errorCount, isCompact });
+  positionWidgetTooltip(widget);
 }
 
 export function removeWidget(element: HTMLElement): void {
   widgetStates.set(element, { state: "idle", errorCount: 0 });
+  widgetRenderMeta.delete(element);
   const containerId = widgetMap.get(element);
   if (containerId) {
     const container = getOrCreateContainer(containerId);
     container.innerHTML = "";
   }
+  widgetElements.delete(element);
 }
 
 /**
@@ -138,6 +217,28 @@ export function removeAllWidgets(): void {
   const root = getShadowRoot();
   const containers = root.querySelectorAll("[id^='widget-']");
   containers.forEach((c) => { c.innerHTML = ""; });
+  widgetElements.clear();
+}
+
+export function clearTransientWidgetsExcept(activeElement: HTMLElement | null): void {
+  for (const element of Array.from(widgetElements)) {
+    if (activeElement && element === activeElement) continue;
+    if (!element.isConnected) {
+      widgetElements.delete(element);
+      continue;
+    }
+
+    const state = widgetStates.get(element);
+    if (!state) continue;
+    if (state.state === "errors") continue;
+
+    widgetStates.set(element, { state: "idle", errorCount: 0 });
+    widgetRenderMeta.delete(element);
+    const containerId = widgetMap.get(element);
+    if (!containerId) continue;
+    const container = getOrCreateContainer(containerId);
+    container.innerHTML = "";
+  }
 }
 
 function getWidgetContainerId(element: HTMLElement): string {
@@ -155,13 +256,78 @@ function getCornerWidgetPosition(rect: DOMRect, size: number, inset: number): { 
   return { top, left };
 }
 
+function positionWidgetElement(widget: HTMLElement, position: { top: number; left: number }): void {
+  widget.style.top = `${position.top}px`;
+  widget.style.left = `${position.left}px`;
+}
+
 function getCompactWidgetSize(state: WidgetState): number {
-  if (state === "errors") return 12;
+  if (state === "errors" || state === "ready") return 12;
   return 18;
+}
+
+function getWidgetPresentation(
+  element: HTMLElement,
+  rect: DOMRect,
+  textRect: DOMRect
+): WidgetPresentation {
+  if (element instanceof HTMLInputElement && !(element instanceof HTMLTextAreaElement)) {
+    return "compact";
+  }
+  if (rect.height < 44) {
+    return "compact";
+  }
+
+  const fullWouldOverlapText = doesFullWidgetOverlapText(rect, textRect);
+  if (rect.height >= 100) {
+    return fullWouldOverlapText ? "compact" : "full";
+  }
+
+  const verticalSpace = rect.bottom - textRect.bottom;
+  if (verticalSpace < 36) {
+    return "compact";
+  }
+
+  return fullWouldOverlapText ? "compact" : "full";
+}
+
+function doesFullWidgetOverlapText(rect: DOMRect, textRect: DOMRect): boolean {
+  if (textRect === rect) return false;
+  const position = getCornerWidgetPosition(rect, 28, 6);
+  const badgeRect = new DOMRect(position.left, position.top, 28, 28);
+  return rectsOverlap(badgeRect, inflateRect(textRect, 8, 6));
+}
+
+function formatErrorCount(errorCount: number): string {
+  if (errorCount > 99) return "99+";
+  return String(errorCount);
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function positionWidgetTooltip(widget: HTMLElement): void {
+  const tooltip = widget.querySelector<HTMLElement>(".grammar-widget__tooltip");
+  if (!tooltip) return;
+
+  tooltip.style.left = "50%";
+  tooltip.style.right = "auto";
+  tooltip.style.transform = "translateX(-50%)";
+
+  const rect = tooltip.getBoundingClientRect();
+  if (rect.left < VIEWPORT_MARGIN) {
+    tooltip.style.left = "0";
+    tooltip.style.right = "auto";
+    tooltip.style.transform = "none";
+    return;
+  }
+
+  if (rect.right > window.innerWidth - VIEWPORT_MARGIN) {
+    tooltip.style.left = "auto";
+    tooltip.style.right = "0";
+    tooltip.style.transform = "none";
+  }
 }
 
 function getCompactWidgetPosition(
@@ -182,12 +348,18 @@ function getCompactWidgetPosition(
   const safeActionLeft = actionStart !== null
     ? Math.max(minLeft, actionStart - size - COMPACT_ACTION_GAP)
     : null;
+  const outsidePosition = getOutsideCompactWidgetPosition(anchor.rect, size, preferredTop);
+
+  if (maxLeft < textBoundary) {
+    return outsidePosition;
+  }
 
   if (safeActionLeft !== null) {
     const pinnedLeft = clamp(safeActionLeft, minLeft, maxLeft);
     if (pinnedLeft >= textBoundary) {
       return { top: preferredTop, left: pinnedLeft };
     }
+    return outsidePosition;
   }
 
   const obstacleRects = [
@@ -208,16 +380,28 @@ function getCompactWidgetPosition(
     }
   }
 
-  if (safeActionLeft !== null) {
-    return {
-      top: preferredTop,
-      left: clamp(safeActionLeft, minLeft, maxLeft),
-    };
+  return outsidePosition;
+}
+
+function getOutsideCompactWidgetPosition(
+  anchorRect: DOMRect,
+  size: number,
+  preferredTop: number
+): { top: number; left: number } {
+  const top = clamp(preferredTop, VIEWPORT_MARGIN, window.innerHeight - size - VIEWPORT_MARGIN);
+  const outsideRight = anchorRect.right + COMPACT_OUTSIDE_GAP;
+  if (outsideRight + size <= window.innerWidth - VIEWPORT_MARGIN) {
+    return { top, left: outsideRight };
+  }
+
+  const outsideLeft = anchorRect.left - size - COMPACT_OUTSIDE_GAP;
+  if (outsideLeft >= VIEWPORT_MARGIN) {
+    return { top, left: outsideLeft };
   }
 
   return {
-    top: preferredTop,
-    left: clamp(textBoundary, minLeft, maxLeft),
+    top,
+    left: clamp(anchorRect.right - size - COMPACT_INSET, VIEWPORT_MARGIN, window.innerWidth - size - VIEWPORT_MARGIN),
   };
 }
 

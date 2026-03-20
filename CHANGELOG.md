@@ -1,5 +1,158 @@
 # Changelog
 
+## v1.11.1
+
+### Bug Fixes
+- Stop surfacing broad unsafe grammar replacements from corrected-text fallback diffs, so derived suggestions no longer collapse whole phrases into nonsense edits
+- Make chunked checks return deduped per-chunk validated errors as the primary result and keep whole-text corrected-text diffs as validation only
+
+## v1.11.0
+
+### Features
+- Parallelize long-draft chunk checks with a small concurrency cap while preserving deterministic merge order and stable final responses
+- Add a dedicated per-chunk cache so repeated long-draft edits can reuse unchanged chunk results instead of rechecking every chunk
+- Include punctuation-rule cache versioning in grammar cache keys so local punctuation updates invalidate stale cached results
+
+## v1.10.0
+
+### Features
+- Keep long-draft checks in a single stable active-editor checking lifecycle with stale-response suppression
+- Limit transient badges to the active editor, add focusout cleanup, and stop scroll/resize from rebuilding unchanged widget DOM
+- Refine compact/full badge presentation for chat-style editors and add underline collision filtering against the widget area
+- Clear stale underlines immediately on text change and gate underline rendering with per-editor generations
+
+## v1.9.0
+
+### Features
+- Add deterministic local punctuation detection for objective malformed patterns such as `,.`, `.,`, duplicated terminal punctuation, space-before-punctuation, and missing spaces after sentence-ending punctuation
+- Add English-only gating in both the content script and service worker so clearly non-English input is suppressed before any provider request and does not show ready/checking badge states
+
+## v1.8.10
+
+### Notes
+- Update the active handoff roadmap to defer `Fix All` work and prioritize punctuation rules, English-only gating, stable checking state, badge lifecycle/placement, underline cleanup, and later chunk-performance work
+
+## v1.8.9
+
+### Bug Fixes
+- Rebuild long-draft Fix All results from one normalized corrected paragraph after chunked checking so repeated Fix All clicks stop chasing unstable leftover punctuation edits
+- Filter unstable derived punctuation-only toggles from corrected-text fallback results so loops like though -> though, -> though. no longer persist in the panel
+
+## v1.8.8
+
+### Bug Fixes
+- Wait for each contenteditable Fix All replacement to settle before applying the next one so rich editors like Gmail stop skipping or corrupting later fixes in long drafts
+- Clear stale ready and checking badges from previously focused editors so Gmail does not show multiple blue ready dots at the same time
+
+## v1.8.7
+
+### Bug Fixes
+- Show exact error counts on the non-compact issue badge up to 99 instead of collapsing everything above 9 into 9+, and switch to 99+ for larger totals
+
+## v1.8.6
+
+### Bug Fixes
+- Split longer drafts into smaller sentence chunks before sending them to the AI so multi-sentence Gmail passages no longer fail as a single oversized zero-error request
+- Invalidate cached clean results again so longer drafts are rechecked through the new chunked request path
+
+## v1.8.5
+
+### Bug Fixes
+- Harden AI response parsing so longer replies that include fenced JSON or extra wrapper text no longer get treated as zero-error clean results
+- Invalidate cached clean results again so Gmail drafts are rechecked through the more tolerant parser path
+
+## v1.8.4
+
+### Bug Fixes
+- Add a high-recall second-pass grammar check for longer clean-looking paragraphs so pasted Gmail drafts do not trust a single weak zero-error response
+
+## v1.8.3
+
+### Bug Fixes
+- Fall back to deriving issue spans from the AI's full corrected text when a provider returns a corrected paragraph but no usable per-error spans, preventing obvious multi-error drafts from collapsing to a false clean badge
+- Invalidate cached clean results again so Gmail-style drafts are rechecked through the new corrected-text fallback path
+
+## v1.8.2
+
+### Bug Fixes
+- Improve paragraph-level grammar detection prompts so realistic Gmail-style mixes of spelling, punctuation, capitalization, word-choice, tense, and agreement mistakes are requested in one pass instead of a too-narrow typo-only style check
+- Normalize broader AI error categories such as capitalization, word choice, tense, article, and typo back into the extension's internal grammar, spelling, and punctuation buckets instead of silently dropping them
+- Invalidate older cached check results after the prompt update so stale false-clean responses are not reused
+
+## v1.8.1
+
+### Bug Fixes
+- Make the compact ready-state badge use the same small dot size as the compact issue badge instead of the larger compact widget size
+
+## v1.8.0
+
+### Improvements
+- Simplify the new ready-state badge to a solid blue indicator
+- Stop re-rendering identical widget states so the ready badge stays visually stable while users type in short drafts
+
+## v1.7.0
+
+### Features
+- Prewarm the background worker on editor focus and show a lightweight ready badge immediately so supported editors feel prepared before typing starts
+- Trigger a faster first grammar check when focusing an editor that already contains enough text, instead of waiting for the normal full debounce path
+
+### Improvements
+- Keep short focused editors in a neutral ready state instead of hiding the widget entirely, reducing visual pop-in when users start typing
+
+## v1.6.14
+
+### Notes
+- Record the X home search compact tooltip clipping as a known deferred edge case; outside badge placement remains enabled, but further tooltip polish is postponed for now
+
+## v1.6.13
+
+### Bug Fixes
+- Clamp compact widget tooltips from their real rendered bounds after layout so issue-count labels stay fully visible even when outside-positioned badges sit near the viewport edge
+
+## v1.6.12
+
+### Bug Fixes
+- Preserve compact tooltip alignment classes after widget rendering so outside-positioned badges actually use the corrected left/right tooltip placement instead of falling back to clipped center alignment
+
+## v1.6.11
+
+### Bug Fixes
+- Choose compact tooltip alignment from actual free space on each side of the badge so outside-positioned badges near the right edge no longer keep their issue labels clipped
+
+## v1.6.10
+
+### Bug Fixes
+- Make compact widget tooltips viewport-aware so issue-count labels stay readable near screen edges instead of being clipped when badges sit outside tiny fields
+
+## v1.6.9
+
+### Bug Fixes
+- Position underlines in single-line inputs from the input's own text baseline metrics instead of the mirror span box so custom search fields like X no longer draw underlines on top of the text
+
+## v1.6.8
+
+### Bug Fixes
+- Add an outside-anchor fallback for compact badges so cramped editors like the X home search box place the dot just outside the field instead of overlapping text or built-in controls
+
+## v1.6.7
+
+### Bug Fixes
+- Stop using one-shot full-content replacement for contenteditable Fix All so rich-text composers like X keep their visible editor state editable after grammar corrections
+
+## v1.6.6
+
+### Features
+- Click the red error badge to open an error panel listing all issues with per-error Fix/Dismiss buttons and a global Fix All
+- Error panel supports both textarea/input (one-shot string splice) and contentEditable (sequential fallback) editors
+- Panel auto-closes on user typing, scroll, resize, Escape, or click outside
+- Success state ("All issues fixed!") shown after last error resolved, auto-closes after 1.5s
+- Dark mode support for the error panel matching existing popover theme
+
+### Improvements
+- Automatic single retry after 2 seconds on transient API failures (network errors, 500s)
+- New orange "!" error widget state shows briefly when a check fails, auto-hides after 4 seconds
+- Rate-limited errors skip retry since the service worker handles its own backoff
+
 ## v1.6.5
 
 ### Bug Fixes

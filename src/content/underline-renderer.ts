@@ -1,6 +1,7 @@
 import { GrammarError } from "../shared/types.js";
 import { getOrCreateContainer, getShadowRoot } from "./shadow-host.js";
 import { showPopover, showPopoverOnHover } from "./popover.js";
+import { getWidgetRect } from "./status-widget.js";
 import {
   buildContentEditableSnapshot,
   getContentEditableRangeForError,
@@ -24,9 +25,16 @@ export function renderErrors(
   errors: GrammarError[],
   ignoredErrors: Set<string>,
   onAccept: () => void,
-  onDismiss: (errorKey: string) => void
+  onDismiss: (errorKey: string) => void,
+  renderGeneration: number = 0
 ): void {
-  clearErrors(element);
+  const containerId = getContainerId(element);
+  const container = getOrCreateContainer(containerId);
+  const currentGeneration = Number(container.dataset.generation ?? "-1");
+  if (currentGeneration > renderGeneration) return;
+
+  container.dataset.generation = String(renderGeneration);
+  container.innerHTML = "";
 
   const visibleErrors = errors.filter(
     (e) => !ignoredErrors.has(errorKey(e))
@@ -127,6 +135,7 @@ function renderForInput(
   container.innerHTML = "";
 
   const rect = element.getBoundingClientRect();
+  const blockedRect = getBlockedUnderlineRect(element);
   const computed = window.getComputedStyle(element);
 
   // Create mirror div
@@ -188,33 +197,33 @@ function renderForInput(
     const idx = parseInt(span.getAttribute("data-error-idx")!);
     const error = errors[idx];
     const spanRect = span.getBoundingClientRect();
+    const underlineTop = element instanceof HTMLInputElement
+      ? getSingleLineInputUnderlineTop(rect, computed)
+      : spanRect.bottom - 4;
+    const underlineRect = new DOMRect(
+      spanRect.left,
+      underlineTop,
+      Math.max(spanRect.width, 8),
+      4
+    );
 
-    const underline = document.createElement("div");
-    underline.className = `grammar-underline grammar-underline--${error.type}`;
-    underline.style.position = "fixed";
-    underline.style.left = `${spanRect.left}px`;
-    underline.style.top = `${spanRect.bottom - 4}px`;
-    underline.style.width = `${spanRect.width}px`;
-    underline.style.height = "4px";
-    underline.style.pointerEvents = "auto";
-    underline.style.cursor = "pointer";
+    const clippedUnderlineRect = clipUnderlineRectToElement(underlineRect, rect);
+    if (!clippedUnderlineRect) return;
+    if (blockedRect && rectsOverlap(clippedUnderlineRect, blockedRect)) return;
 
-    // Only show underlines within the element bounds
-    if (
-      spanRect.bottom > rect.top &&
-      spanRect.top < rect.bottom &&
-      spanRect.right > rect.left &&
-      spanRect.left < rect.right
-    ) {
-      attachUnderlineListeners(underline, error, spanRect, element, onAccept, onDismiss);
-      container.appendChild(underline);
-    }
+    const underline = createUnderline(error, clippedUnderlineRect);
+    attachUnderlineListeners(underline, error, spanRect, element, onAccept, onDismiss);
+    container.appendChild(underline);
   });
 
   for (const error of errors) {
     if (error.length !== 0) continue;
     const anchorRect = getInputInsertionAnchorRect(measurer, error.offset, rect);
-    const underline = createUnderline(error, anchorRect);
+    const underlineRect = buildUnderlineRect(anchorRect);
+    const clippedUnderlineRect = clipUnderlineRectToElement(underlineRect, rect);
+    if (!clippedUnderlineRect) continue;
+    if (blockedRect && rectsOverlap(clippedUnderlineRect, blockedRect)) continue;
+    const underline = createUnderline(error, clippedUnderlineRect);
     attachUnderlineListeners(underline, error, anchorRect, element, onAccept, onDismiss);
     container.appendChild(underline);
   }
@@ -234,11 +243,16 @@ function renderForContentEditable(
   container.innerHTML = "";
 
   const snapshot = buildContentEditableSnapshot(element);
+  const elementRect = element.getBoundingClientRect();
+  const blockedRect = getBlockedUnderlineRect(element);
 
   for (const error of errors) {
     const rects = getErrorClientRects(element, error, snapshot);
     for (const r of rects) {
-      const underline = createUnderline(error, r);
+      const underlineRect = clipUnderlineRectToElement(buildUnderlineRect(r), elementRect);
+      if (!underlineRect) continue;
+      if (blockedRect && rectsOverlap(underlineRect, blockedRect)) continue;
+      const underline = createUnderline(error, underlineRect);
       attachUnderlineListeners(underline, error, r, element, onAccept, onDismiss);
       container.appendChild(underline);
     }
@@ -250,12 +264,54 @@ function createUnderline(error: GrammarError, rect: DOMRect): HTMLElement {
   underline.className = `grammar-underline grammar-underline--${error.type}`;
   underline.style.position = "fixed";
   underline.style.left = `${rect.left}px`;
-  underline.style.top = `${rect.bottom - 4}px`;
+  underline.style.top = `${rect.top}px`;
   underline.style.width = `${Math.max(rect.width, 8)}px`;
-  underline.style.height = "4px";
+  underline.style.height = `${Math.max(rect.height, 4)}px`;
   underline.style.pointerEvents = "auto";
   underline.style.cursor = "pointer";
   return underline;
+}
+
+function getBlockedUnderlineRect(element: HTMLElement): DOMRect | null {
+  const widgetRect = getWidgetRect(element);
+  return widgetRect ? inflateRect(widgetRect, 4, 4) : null;
+}
+
+function buildUnderlineRect(anchorRect: DOMRect): DOMRect {
+  return new DOMRect(
+    anchorRect.left,
+    anchorRect.bottom - 4,
+    Math.max(anchorRect.width, 8),
+    4
+  );
+}
+
+function clipUnderlineRectToElement(underlineRect: DOMRect, elementRect: DOMRect): DOMRect | null {
+  const left = Math.max(underlineRect.left, elementRect.left);
+  const top = Math.max(underlineRect.top, elementRect.top);
+  const right = Math.min(underlineRect.right, elementRect.right);
+  const bottom = Math.min(underlineRect.bottom, elementRect.bottom);
+
+  if (right - left < 2 || bottom - top < 2) return null;
+  return new DOMRect(left, top, right - left, bottom - top);
+}
+
+function inflateRect(rect: DOMRect, xPad: number, yPad: number): DOMRect {
+  return new DOMRect(
+    rect.left - xPad,
+    rect.top - yPad,
+    rect.width + xPad * 2,
+    rect.height + yPad * 2
+  );
+}
+
+function rectsOverlap(a: DOMRect, b: DOMRect): boolean {
+  return !(
+    a.right <= b.left ||
+    a.left >= b.right ||
+    a.bottom <= b.top ||
+    a.top >= b.bottom
+  );
 }
 
 function getErrorClientRects(
@@ -294,6 +350,45 @@ function getInputInsertionAnchorRect(measurer: HTMLElement, offset: number, fall
   }
 
   return new DOMRect(fallbackRect.right - 8, fallbackRect.bottom - 20, 8, 16);
+}
+
+function getSingleLineInputUnderlineTop(
+  rect: DOMRect,
+  computed: CSSStyleDeclaration
+): number {
+  const borderTop = parsePixelValue(computed.borderTopWidth);
+  const borderBottom = parsePixelValue(computed.borderBottomWidth);
+  const paddingTop = parsePixelValue(computed.paddingTop);
+  const paddingBottom = parsePixelValue(computed.paddingBottom);
+  const fontSize = parsePixelValue(computed.fontSize) || 16;
+  const lineHeight = getResolvedLineHeight(computed, fontSize);
+  const innerHeight = Math.max(rect.height - borderTop - borderBottom, lineHeight);
+  const centeredTop = rect.top + borderTop + Math.max((innerHeight - lineHeight) / 2, 0);
+  const contentTop = rect.top + borderTop + paddingTop;
+  const contentBottom = rect.bottom - borderBottom - paddingBottom;
+  const textTop = Math.max(centeredTop, contentTop);
+  const textBottom = Math.min(textTop + lineHeight, contentBottom || rect.bottom);
+  return Math.max(rect.top, textBottom - 4);
+}
+
+function getResolvedLineHeight(computed: CSSStyleDeclaration, fontSize: number): number {
+  const raw = computed.lineHeight;
+  if (!raw || raw === "normal") {
+    return fontSize * 1.2;
+  }
+  const parsed = parseFloat(raw);
+  if (Number.isNaN(parsed)) {
+    return fontSize * 1.2;
+  }
+  if (raw.endsWith("px")) {
+    return parsed;
+  }
+  return parsed * fontSize;
+}
+
+function parsePixelValue(value: string): number {
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function getContentEditableInsertionRect(

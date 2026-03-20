@@ -1,10 +1,11 @@
-import { GrammarError, CheckRequest, CheckResponse, ElementState } from "../shared/types.js";
+import { GrammarError, CheckRequest, CheckResponse, ElementState, PrewarmResponse } from "../shared/types.js";
 import { getSettings, isConfigured } from "../shared/storage.js";
 import { renderErrors, clearErrors, clearAllErrors, errorKey } from "./underline-renderer.js";
-import { updateWidget, removeWidget, removeAllWidgets, refreshWidget } from "./status-widget.js";
+import { updateWidget, removeWidget, removeAllWidgets, refreshWidget, clearTransientWidgetsExcept } from "./status-widget.js";
 import { showPopover } from "./popover.js";
-import { showErrorPanel, hideErrorPanel } from "./error-panel.js";
+import { showErrorPanel, hideErrorPanel, getErrorPanelElement, isErrorPanelOpenForElement } from "./error-panel.js";
 import { getContentEditableText } from "./contenteditable-snapshot.js";
+import { isLikelyEnglish } from "../shared/language-detect.js";
 
 const elementStates = new WeakMap<HTMLElement, ElementState>();
 const trackedElements = new Set<HTMLElement>();
@@ -14,6 +15,9 @@ let enabled = true;
 let configuredCache: boolean | null = null;
 let lastUrl = location.href;
 let sourceCounter = 0;
+let backgroundPrewarmed = false;
+let backgroundPrewarmPromise: Promise<void> | null = null;
+const FOCUS_CHECK_DELAY_MS = 150;
 
 // Track recently applied fixes to prevent oscillation (suggestion reverting back to original)
 // Maps element → Set of "suggestion→original" pairs that should be suppressed
@@ -179,12 +183,24 @@ export async function startMonitoring(): Promise<void> {
     if (!(target instanceof HTMLElement)) return;
 
     const el = findEditableRoot(target);
-    if (el && !elementStates.has(el)) {
-      if (!shouldSkipElement(el)) {
-        console.log("[AI Grammar Checker] focusin detected editable:", el.tagName, el.className, el.getAttribute("contenteditable"), el.getAttribute("role"));
-        attachListeners(el);
-        trackedElements.add(el);
-      }
+    if (!el) return;
+
+    if (!elementStates.has(el) && !shouldSkipElement(el)) {
+      console.log("[AI Grammar Checker] focusin detected editable:", el.tagName, el.className, el.getAttribute("contenteditable"), el.getAttribute("role"));
+      attachListeners(el);
+      trackedElements.add(el);
+    }
+
+    if (elementStates.has(el)) {
+      const state = elementStates.get(el);
+      if (state) clearFocusOutTimer(state);
+      clearTransientWidgetsExcept(el);
+      void prewarmBackground();
+      requestAnimationFrame(() => {
+        if (isElementActive(el)) {
+          primeElementOnFocus(el);
+        }
+      });
     }
   }, true);
 
@@ -236,6 +252,8 @@ export async function startMonitoring(): Promise<void> {
         trackedElements.delete(el);
       }
     }
+
+    clearTransientWidgetsExcept(getActiveTrackedElement() ?? getErrorPanelElement());
 
     // Periodic rescan: catch editors that might have been missed by MutationObserver/focusin.
     // This is a safety net for complex SPAs (LinkedIn, etc.) where editors are created
@@ -320,6 +338,9 @@ function attachListeners(element: HTMLElement): void {
     errors: [],
     ignoredErrors: new Set(),
     debounceTimer: null,
+    focusOutTimer: null,
+    checkGeneration: 0,
+    renderGeneration: 0,
     sourceId,
     observers: [],
   };
@@ -334,6 +355,18 @@ function attachListeners(element: HTMLElement): void {
     // Get current text to check if it actually changed
     const currentText = normalizeText(getElementText(element));
 
+    if (currentText.trim() && !isLikelyEnglish(currentText)) {
+      clearPendingCheck(currentState);
+      if (currentState.errors.length > 0) {
+        clearErrors(element);
+        currentState.errors = [];
+      }
+      currentState.pendingText = null;
+      currentState.lastText = currentText;
+      updateWidget(element, "idle");
+      return;
+    }
+
     if (!currentText.trim() || currentText.trim().length < 10) {
       // Text is empty or too short — clear everything and don't schedule a check
       if (currentState.errors.length > 0) {
@@ -345,7 +378,11 @@ function attachListeners(element: HTMLElement): void {
         clearTimeout(currentState.debounceTimer);
         currentState.debounceTimer = null;
       }
-      updateWidget(element, "idle");
+      if (document.activeElement === element || element.contains(document.activeElement)) {
+        updateWidget(element, "ready");
+      } else {
+        updateWidget(element, "idle");
+      }
       return;
     }
 
@@ -353,6 +390,7 @@ function attachListeners(element: HTMLElement): void {
     // contenteditable DOM mutations that don't change the visible text)
     if (currentText !== currentState.lastText) {
       clearErrors(element);
+      currentState.renderGeneration += 1;
       if (currentState.errors.length > 0) {
         currentState.errors = [];
         updateWidget(element, "idle");
@@ -371,6 +409,26 @@ function attachListeners(element: HTMLElement): void {
   // Listen for multiple events to catch all text changes (including programmatic ones)
   element.addEventListener("input", handler);
   element.addEventListener("keyup", handler);
+  element.addEventListener("focusin", () => {
+    const currentState = elementStates.get(element);
+    if (currentState) clearFocusOutTimer(currentState);
+  });
+  element.addEventListener("focusout", () => {
+    const currentState = elementStates.get(element);
+    if (!currentState) return;
+    clearFocusOutTimer(currentState);
+    currentState.focusOutTimer = window.setTimeout(() => {
+      currentState.focusOutTimer = null;
+      if (isElementActive(element)) return;
+      if (isErrorPanelOpenForElement(element)) return;
+      const visibleErrors = currentState.errors.filter(
+        (e) => !currentState.ignoredErrors.has(errorKey(e))
+      );
+      if (visibleErrors.length === 0) {
+        updateWidget(element, "idle");
+      }
+    }, 250);
+  });
 
   // For contenteditable, also watch for DOM mutations.
   // Use a microtask-debounced callback to avoid firing the handler dozens of times
@@ -409,7 +467,64 @@ function attachListeners(element: HTMLElement): void {
   }
 }
 
-async function checkElement(element: HTMLElement, autoShowPanel = false): Promise<void> {
+async function prewarmBackground(): Promise<void> {
+  if (backgroundPrewarmed) return;
+  if (backgroundPrewarmPromise) return backgroundPrewarmPromise;
+
+  backgroundPrewarmPromise = chrome.runtime.sendMessage({ type: "PREWARM" })
+    .then((response?: PrewarmResponse) => {
+      if (response?.type === "PREWARM_RESULT") {
+        configuredCache = response.configured;
+      }
+      backgroundPrewarmed = true;
+    })
+    .catch(() => {
+      // Ignore prewarm failures — normal checks will still work.
+    })
+    .finally(() => {
+      backgroundPrewarmPromise = null;
+    });
+
+  return backgroundPrewarmPromise;
+}
+
+function primeElementOnFocus(element: HTMLElement): void {
+  const state = elementStates.get(element);
+  if (!state) return;
+
+  const visibleErrors = state.errors.filter(
+    (e) => !state.ignoredErrors.has(errorKey(e))
+  );
+  if (visibleErrors.length > 0) {
+    updateWidget(element, "errors", visibleErrors.length, () => {
+      openErrorPanelForElement(element);
+    });
+    return;
+  }
+
+  const text = normalizeText(getElementText(element));
+  if (text.trim() && !isLikelyEnglish(text)) {
+    updateWidget(element, "idle");
+    return;
+  }
+
+  if (!text.trim() || text.trim().length < 10) {
+    updateWidget(element, "ready");
+    return;
+  }
+
+  if (text === state.lastText || text === state.pendingText) return;
+
+  updateWidget(element, "checking");
+  if (state.debounceTimer !== null) {
+    clearTimeout(state.debounceTimer);
+  }
+  state.debounceTimer = window.setTimeout(async () => {
+    await checkElement(element);
+  }, Math.min(debounceMs, FOCUS_CHECK_DELAY_MS));
+}
+
+async function checkElement(element: HTMLElement, autoShowPanel = false, retryCount = 0): Promise<void> {
   if (configuredCache === null) configuredCache = await isConfigured();
   if (!configuredCache) {
     console.log("[AI Grammar Checker] API key not configured, skipping check");
@@ -420,6 +535,18 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
   if (!state) return;
 
   const text = normalizeText(getElementText(element));
+
+  if (text.trim() && !isLikelyEnglish(text)) {
+    clearPendingCheck(state);
+    if (state.errors.length > 0) {
+      state.errors = [];
+      clearErrors(element);
+    }
+    state.pendingText = null;
+    state.lastText = text;
+    updateWidget(element, "idle");
+    return;
+  }
 
   // If text is empty or too short, clear existing errors and return
   if (!text.trim() || text.trim().length < 10) {
@@ -437,6 +564,7 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
   if (text === state.lastText || text === state.pendingText) return;
 
   state.pendingText = text;
+  const checkGeneration = ++state.checkGeneration;
 
   // Show checking widget
   console.log("[AI Grammar Checker] Checking text:", text.substring(0, 50) + (text.length > 50 ? "..." : ""));
@@ -453,12 +581,28 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
     };
 
     const response: CheckResponse = await chrome.runtime.sendMessage(request);
+    const latestState = elementStates.get(element);
+    if (!latestState || latestState.checkGeneration !== checkGeneration) {
+      return;
+    }
 
     if (response.error) {
-      if (state.pendingText === text) {
-        state.pendingText = null;
+      if (latestState.pendingText === text) {
+        latestState.pendingText = null;
       }
-      console.log("[AI Grammar Checker] API error:", response.error);
+      const isRateLimit = response.error.includes("Rate limit") || response.rateLimitedUntil;
+      if (!isRateLimit && retryCount < 1) {
+        console.log("[AI Grammar Checker] API error, retrying in 2s:", response.error);
+        updateWidget(element, "error");
+        setTimeout(() => {
+          const retryState = elementStates.get(element);
+          if (!retryState || retryState.checkGeneration !== checkGeneration) return;
+          if (normalizeText(getElementText(element)) !== text) return;
+          checkElement(element, autoShowPanel, retryCount + 1);
+        }, 2000);
+        return;
+      }
+      console.log("[AI Grammar Checker] API error (no retry):", response.error);
       updateWidget(element, "idle");
       return;
     }
@@ -469,28 +613,30 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
     const currentText = normalizeText(getElementText(element));
 
     if (currentText !== text) {
-      if (state.pendingText === text) {
-        state.pendingText = null;
+      if (latestState.pendingText === text) {
+        latestState.pendingText = null;
       }
       console.log("[AI Grammar Checker] Text changed during check, discarding result");
-      updateWidget(element, "idle");
+      if (latestState.debounceTimer === null) {
+        updateWidget(element, "idle");
+      }
       return;
     }
 
-    state.lastText = text;
-    if (state.pendingText === text) {
-      state.pendingText = null;
+    latestState.lastText = text;
+    if (latestState.pendingText === text) {
+      latestState.pendingText = null;
     }
 
     // Filter out errors that would reverse a recently applied fix (prevents oscillation)
-    state.errors = response.errors.filter((e) => !isReverseFix(element, e));
-    state.correctedText = response.correctedText;
+    latestState.errors = response.errors.filter((e) => !isReverseFix(element, e));
+    latestState.correctedText = response.correctedText;
 
-    console.log("[AI Grammar Checker] Found", state.errors.length, "errors");
+    console.log("[AI Grammar Checker] Found", latestState.errors.length, "errors");
 
     // Update widget state
-    const visibleErrors = state.errors.filter(
-      (e) => !state.ignoredErrors.has(errorKey(e))
+    const visibleErrors = latestState.errors.filter(
+      (e) => !latestState.ignoredErrors.has(errorKey(e))
     );
 
     if (visibleErrors.length > 0) {
@@ -508,12 +654,27 @@ async function checkElement(element: HTMLElement, autoShowPanel = false): Promis
 
     renderErrorsForElement(element);
   } catch (err: any) {
-    if (state.pendingText === text) {
-      state.pendingText = null;
+    const latestState = elementStates.get(element);
+    if (!latestState || latestState.checkGeneration !== checkGeneration) {
+      return;
+    }
+    if (latestState.pendingText === text) {
+      latestState.pendingText = null;
     }
     if (err?.message?.includes("Extension context invalidated")) return;
-    console.warn("[AI Grammar Checker] Error:", err);
-    updateWidget(element, "idle");
+    if (retryCount < 1) {
+      console.warn("[AI Grammar Checker] Error, retrying in 2s:", err);
+      updateWidget(element, "error");
+      setTimeout(() => {
+        const retryState = elementStates.get(element);
+        if (!retryState || retryState.checkGeneration !== checkGeneration) return;
+        if (normalizeText(getElementText(element)) !== text) return;
+        checkElement(element, autoShowPanel, retryCount + 1);
+      }, 2000);
+    } else {
+      console.warn("[AI Grammar Checker] Error (no retry):", err);
+      updateWidget(element, "idle");
+    }
   }
 }
 
@@ -530,15 +691,50 @@ function cleanupElementState(element: HTMLElement): void {
   const state = elementStates.get(element);
   if (!state) return;
 
-  if (state.debounceTimer !== null) {
-    clearTimeout(state.debounceTimer);
-    state.debounceTimer = null;
-  }
+  clearPendingCheck(state);
+  clearFocusOutTimer(state);
 
   for (const observer of state.observers) {
     observer.disconnect();
   }
   state.observers = [];
+}
+
+function clearPendingCheck(state: ElementState): void {
+  if (state.debounceTimer !== null) {
+    clearTimeout(state.debounceTimer);
+    state.debounceTimer = null;
+  }
+}
+
+function clearFocusOutTimer(state: ElementState): void {
+  if (state.focusOutTimer !== null) {
+    clearTimeout(state.focusOutTimer);
+    state.focusOutTimer = null;
+  }
+}
+
+function getActiveTrackedElement(): HTMLElement | null {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return null;
+
+  const matched = findEditableRoot(active);
+  if (matched && elementStates.has(matched)) {
+    return matched;
+  }
+
+  for (const el of trackedElements) {
+    if (el === active || el.contains(active)) {
+      return el;
+    }
+  }
+
+  return null;
+}
+
+function isElementActive(element: HTMLElement): boolean {
+  const active = document.activeElement;
+  return active instanceof HTMLElement && (active === element || element.contains(active));
 }
 
 function openErrorPanelForElement(element: HTMLElement): void {
@@ -623,7 +819,8 @@ function renderErrorsForElement(element: HTMLElement): void {
           updateWidget(element, "clean");
         }
       }
-    }
+    },
+    state.renderGeneration
   );
 }
 

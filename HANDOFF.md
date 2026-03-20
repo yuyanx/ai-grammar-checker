@@ -10,23 +10,22 @@ npm run build
 Load `dist/` as unpacked extension in Chrome.
 
 ## Current State
-- Current package/manifest version: `1.6.5`
+- Current package/manifest version: `1.8.10`
 - `npm run build` passes locally
-- Instagram compact badge placement is now explicitly anchored to visible action labels like `Post`, with a hard left-side safety gap to avoid overlap
-- Compact error dots are reduced to `12px` for crowded editors
-- Verified with a rendered local fixture using the real widget code:
-  - Fixture: `/tmp/ig-widget-test/index.html`
-  - Screenshot: `/tmp/ig-widget-test/result.png`
-  - Result: `PASS gap=16px widget=694-710 post=726-764`
+- Error panel feature complete: clicking the red badge opens a panel listing all errors with Fix/Dismiss per error and Fix All
+- Automatic single retry on transient API failures with visible orange "!" widget feedback
+- Instagram compact badge placement is explicitly anchored to visible action labels like `Post`, with a hard left-side safety gap
+- Compact error dots are `12px` for crowded editors
+- X home search box compact tooltip clipping is a known issue for now; outside badge placement is kept, but the hover issue-count tag can still clip in that edge case
 - `AGENTS.md` is still untracked locally and should stay out of the commit unless explicitly requested
 
 ## Recent Changes (newest first)
-1. **Instagram compact badge fix** — `status-widget.ts` now explicitly detects visible action labels such as `Post`, `Comment`, `Reply`, and `Send` and anchors the compact dot to the left of that label with a hard safety gap
-2. **Compact badge sizing/placement cleanup** — compact error dots are now `12px`, and compact placement uses rendered text bounds instead of the full contenteditable box
-3. **Rendered obstacle detection fix** — right-side action text in shared wrappers is now treated as occupied space instead of being filtered out
-4. **Contenteditable offset integrity** — added a shared visible-text snapshot/mapping utility so multiline rich-text editors, duplicate words, and fix application all use the same offsets
-5. **Retry-state fix** — unchanged text is retryable after transient API failures instead of being stuck until the user types again
-6. **Version/changelog updates** — package/manifest/changelog were updated through `1.6.5`
+1. **Known issue recorded** (v1.6.14) — X home search box can still clip the compact badge's hover issue-count tooltip near the viewport edge; defer further work on this edge case for now
+2. **Error panel feature** (v1.6.6) — `error-panel.ts` new file: click the red badge to see all errors listed with Fix/Dismiss per error, Fix All button, success state, dark mode, auto-close on typing/scroll/Escape
+3. **Automatic retry** (v1.6.6) — `text-monitor.ts` retries once after 2s on transient API failures; `status-widget.ts` shows orange "!" widget during retry; rate-limited errors skip retry
+4. **Instagram compact badge fix** (v1.6.5) — `status-widget.ts` explicitly detects visible action labels (`Post`, `Comment`, `Reply`, `Send`) and anchors the compact dot with a hard safety gap
+5. **Compact badge sizing/placement cleanup** — compact error dots are `12px`, placement uses rendered text bounds instead of the full contenteditable box
+6. **Contenteditable offset integrity** — shared visible-text snapshot/mapping utility (`contenteditable-snapshot.ts`) for consistent offsets across underlines, popovers, and fixes
 
 ## Architecture
 
@@ -68,14 +67,39 @@ Load `dist/` as unpacked extension in Chrome.
 - Error detection quality still depends heavily on prompt tuning (`src/shared/prompts.ts`)
 - Large text inputs may still be slow because the full normalized text is sent to the API each time
 - Instagram placement is verified on a local fixture, but live-page DOM inspection in Safari is limited because `do JavaScript` from Apple Events is disabled on this machine
+- X home search box still clips the compact badge's hover tooltip in some layouts even after outside-badge fallback; treat as deferred edge case unless it becomes higher priority
+- Gmail long-draft `Fix All` still needs convergence work in some cases; repeated Fix All clicks can cascade remaining issues and punctuation can oscillate (`though -> though,` then `though,. -> though.`). This work is now deferred from the active roadmap until the other correctness/UX issues are handled.
+- Gmail/Grok ready-state widget lifecycle still needs stabilization; blue ready badges can occasionally fail to appear, linger on stale editors, or flicker/re-render during scroll/layout changes
+- Ready/error widget size logic is currently geometry-based in `status-widget.ts`: editors with `getBoundingClientRect().height < 44` use the compact dot path, otherwise the full circular badge path
+- Underline rendering can still become visually messy or stale in some layouts and needs a render-cancellation / stale-overlay cleanup pass
+- Add deterministic local punctuation heuristics for obvious cases the model can miss (for example duplicated terminal punctuation or comma-period conflicts) instead of relying entirely on provider output
+- No English-only gating exists yet, so non-English text can still be sent to the provider and chat composers like Grok can feel translation-biased instead of English-correction-only
+- Long-draft checking should stay in one stable `checking` state, but chunked work currently still needs a dedicated UX-stability pass
 
-## Commands Run In This Session
+## Active Roadmap (Fix All Deferred)
+
+### Phase 1: Detection Reliability
+1. Add deterministic local punctuation rules for obvious malformed punctuation patterns
+2. Add English-only gating in both content script and service worker so non-English text is suppressed before provider calls
+
+### Phase 2: Stable UX
+3. Keep one stable long-draft `checking` state during chunked checks
+4. Stabilize ready-badge lifecycle so transient badges only belong to the active editor
+5. Stop badge flicker/re-animation on scroll and resize
+6. Refine compact/full badge sizing and placement for chat composers so the badge never overlaps active text
+7. Fix stale underline rendering and badge/tooltip collision cleanup
+
+### Phase 3: Performance
+8. Parallelize chunk checks with a small concurrency cap
+9. Add per-chunk caching
+
+## Deferred Backlog
+- Long-draft `Fix All` convergence
+- Contenteditable whole-editor `Fix All` replacement experiments
+- Post-`Fix All` validation and oscillation suppression work
+
+## Commands
 ```bash
-git status --short --branch
-npm run build
-osascript -e 'tell application "Safari" to count windows'
-osascript -e 'tell application "Safari" to get URL of current tab of front window'
-./node_modules/.bin/esbuild /tmp/ig-widget-test/entry.ts --bundle --format=iife --outfile=/tmp/ig-widget-test/entry.js
-'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless=new --disable-gpu --virtual-time-budget=4000 --dump-dom file:///tmp/ig-widget-test/index.html
-'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless=new --disable-gpu --hide-scrollbars --window-size=900,400 --virtual-time-budget=4000 --screenshot=/tmp/ig-widget-test/result.png file:///tmp/ig-widget-test/index.html
+npm run build          # Build extension to dist/
+npx tsc                # Type-check only
 ```
