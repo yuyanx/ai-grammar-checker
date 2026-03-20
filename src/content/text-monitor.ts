@@ -3,8 +3,9 @@ import { getSettings, isConfigured } from "../shared/storage.js";
 import { renderErrors, clearErrors, clearAllErrors, errorKey } from "./underline-renderer.js";
 import { updateWidget, removeWidget, removeAllWidgets, refreshWidget, clearTransientWidgetsExcept } from "./status-widget.js";
 import { showPopover } from "./popover.js";
-import { showErrorPanel, hideErrorPanel } from "./error-panel.js";
+import { showErrorPanel, hideErrorPanel, isErrorPanelOpenForElement } from "./error-panel.js";
 import { getContentEditableText } from "./contenteditable-snapshot.js";
+import { isLikelyEnglish } from "../shared/language-detect.js";
 
 const elementStates = new WeakMap<HTMLElement, ElementState>();
 const trackedElements = new Set<HTMLElement>();
@@ -215,6 +216,9 @@ export async function startMonitoring(): Promise<void> {
 
   // Periodic maintenance: cleanup + rescan for missed editors
   setInterval(() => {
+    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : document.body;
+    clearTransientWidgetsExcept(activeElement);
+
     // Detect URL change (SPA navigation) — nuclear cleanup
     if (location.href !== lastUrl) {
       lastUrl = location.href;
@@ -327,12 +331,17 @@ function attachListeners(element: HTMLElement): void {
     lastText: "",
     pendingText: null,
     errors: [],
+    fixAllAppliedText: undefined,
+    fixAllPriorErrors: undefined,
+    renderGeneration: 0,
     ignoredErrors: new Set(),
     debounceTimer: null,
     sourceId,
     observers: [],
   };
   elementStates.set(element, state);
+
+  let focusoutTimer: number | null = null;
 
   const handler = () => {
     if (!enabled) return;
@@ -342,6 +351,23 @@ function attachListeners(element: HTMLElement): void {
 
     // Get current text to check if it actually changed
     const currentText = normalizeText(getElementText(element));
+    const textChanged = currentText !== currentState.lastText;
+
+    if (textChanged) {
+      currentState.renderGeneration += 1;
+      clearErrors(element, currentState.renderGeneration);
+      currentState.fixAllAppliedText = undefined;
+      currentState.fixAllPriorErrors = undefined;
+      if (currentState.errors.length > 0) {
+        currentState.errors = [];
+        updateWidget(element, "idle");
+      }
+    }
+
+    if (currentText.trim() && !isLikelyEnglish(currentText)) {
+      clearUnsupportedLanguageState(element, currentState);
+      return;
+    }
 
     if (!currentText.trim() || currentText.trim().length < 10) {
       // Text is empty or too short — clear everything and don't schedule a check
@@ -362,16 +388,6 @@ function attachListeners(element: HTMLElement): void {
       return;
     }
 
-    // Only clear errors when text actually changed (prevents flicker from
-    // contenteditable DOM mutations that don't change the visible text)
-    if (currentText !== currentState.lastText) {
-      clearErrors(element);
-      if (currentState.errors.length > 0) {
-        currentState.errors = [];
-        updateWidget(element, "idle");
-      }
-    }
-
     if (currentState.debounceTimer !== null) {
       clearTimeout(currentState.debounceTimer);
     }
@@ -384,6 +400,42 @@ function attachListeners(element: HTMLElement): void {
   // Listen for multiple events to catch all text changes (including programmatic ones)
   element.addEventListener("input", handler);
   element.addEventListener("keyup", handler);
+  element.addEventListener("focusin", () => {
+    if (focusoutTimer !== null) {
+      clearTimeout(focusoutTimer);
+      focusoutTimer = null;
+    }
+  });
+
+  element.addEventListener("focusout", () => {
+    if (focusoutTimer !== null) {
+      clearTimeout(focusoutTimer);
+    }
+
+    focusoutTimer = window.setTimeout(() => {
+      focusoutTimer = null;
+
+      const activeElement = document.activeElement;
+      if (activeElement === element) return;
+      if (activeElement instanceof Node && element.contains(activeElement)) return;
+      if (isErrorPanelOpenForElement(element)) return;
+
+      const currentState = elementStates.get(element);
+      if (!currentState) return;
+
+      const visibleErrors = currentState.errors.filter(
+        (error) => !currentState.ignoredErrors.has(errorKey(error))
+      );
+      if (visibleErrors.length > 0) {
+        updateWidget(element, "errors", visibleErrors.length, () => {
+          openErrorPanelForElement(element);
+        });
+        return;
+      }
+
+      updateWidget(element, "idle");
+    }, 250);
+  });
 
   // For contenteditable, also watch for DOM mutations.
   // Use a microtask-debounced callback to avoid firing the handler dozens of times
@@ -443,6 +495,37 @@ async function prewarmBackground(): Promise<void> {
   return backgroundPrewarmPromise;
 }
 
+function clearUnsupportedLanguageState(element: HTMLElement, state: ElementState): void {
+  state.errors = [];
+  state.correctedText = undefined;
+  state.fixAllAppliedText = undefined;
+  state.fixAllPriorErrors = undefined;
+  state.pendingText = null;
+  state.lastText = "";
+  clearErrors(element);
+  updateWidget(element, "idle");
+}
+
+function suppressFixAllOscillationErrors(
+  errors: GrammarError[],
+  priorErrors: GrammarError[]
+): GrammarError[] {
+  return errors.filter((error) => !priorErrors.some((priorError) => {
+    if (priorError.offset !== error.offset) return false;
+
+    const priorSuggestion = priorError.suggestion.toLowerCase();
+    const priorOriginal = priorError.original.toLowerCase();
+    const errorOriginal = error.original.toLowerCase();
+    const errorSuggestion = error.suggestion.toLowerCase();
+
+    if (priorSuggestion !== errorOriginal) return false;
+
+    const isExactReversal = errorSuggestion === priorOriginal;
+    const isOscillationDescendant = errorSuggestion !== priorOriginal;
+    return isExactReversal || isOscillationDescendant;
+  }));
+}
+
 function primeElementOnFocus(element: HTMLElement): void {
   const state = elementStates.get(element);
   if (!state) return;
@@ -458,6 +541,11 @@ function primeElementOnFocus(element: HTMLElement): void {
   }
 
   const text = normalizeText(getElementText(element));
+  if (text.trim() && !isLikelyEnglish(text)) {
+    clearUnsupportedLanguageState(element, state);
+    return;
+  }
+
   if (!text.trim() || text.trim().length < 10) {
     updateWidget(element, "ready");
     return;
@@ -485,6 +573,11 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
   if (!state) return;
 
   const text = normalizeText(getElementText(element));
+
+  if (text.trim() && !isLikelyEnglish(text)) {
+    clearUnsupportedLanguageState(element, state);
+    return;
+  }
 
   // If text is empty or too short, clear existing errors and return
   if (!text.trim() || text.trim().length < 10) {
@@ -556,8 +649,18 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
       state.pendingText = null;
     }
 
+    let nextErrors = response.errors;
+    const shouldConsumeFixAllState = Boolean(
+      state.fixAllAppliedText && normalizeText(state.fixAllAppliedText) === currentText && state.fixAllPriorErrors?.length
+    );
+    if (shouldConsumeFixAllState) {
+      nextErrors = suppressFixAllOscillationErrors(nextErrors, state.fixAllPriorErrors!);
+      state.fixAllAppliedText = undefined;
+      state.fixAllPriorErrors = undefined;
+    }
+
     // Filter out errors that would reverse a recently applied fix (prevents oscillation)
-    state.errors = response.errors.filter((e) => !isReverseFix(element, e));
+    state.errors = nextErrors.filter((e) => !isReverseFix(element, e));
     state.correctedText = response.correctedText;
 
     console.log("[AI Grammar Checker] Found", state.errors.length, "errors");
@@ -638,15 +741,17 @@ function openErrorPanelForElement(element: HTMLElement): void {
     currentState.ignoredErrors,
     element.getBoundingClientRect(),
     currentState.correctedText,
-    () => {
+    (appliedText?: string, fixedErrors?: GrammarError[]) => {
       // onAccept: clear errors and re-check
       const s = elementStates.get(element);
       if (s) {
         s.errors = [];
         s.lastText = "";
+        s.fixAllAppliedText = appliedText;
+        s.fixAllPriorErrors = fixedErrors;
         clearErrors(element);
         updateWidget(element, "idle");
-        setTimeout(() => checkElement(element, true), 300);
+        setTimeout(() => checkElement(element, false), 300);
       }
     },
     (key: string) => {
@@ -705,7 +810,8 @@ function renderErrorsForElement(element: HTMLElement): void {
           updateWidget(element, "clean");
         }
       }
-    }
+    },
+    state.renderGeneration
   );
 }
 

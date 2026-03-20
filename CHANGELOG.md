@@ -1,5 +1,89 @@
 # Changelog
 
+## v1.10.1
+
+### Bug Fixes
+- Tighten per-chunk cache behavior to the roadmap spec by limiting the chunk LRU to 50 entries and invalidating all cached chunks for an editor when its chunk boundaries shift
+- Add source-scoped boundary hashing to chunk cache keys so unchanged long-draft chunks still reuse cached results while mid-draft sentence-boundary edits force a clean recache
+
+## v1.10.0
+
+### Features
+- Add a dedicated per-chunk service-worker cache for long-draft checks so unchanged chunks can reuse validated AI results across nearby edits
+- Key chunk cache entries by chunk text plus boundary metadata so chunk boundary changes invalidate stale entries automatically and only affected chunks need fresh provider calls
+
+## v1.9.0
+
+### Features
+- Parallelize long-draft chunk checks in the service worker with a capped concurrency of 3 while preserving deterministic merge order for returned errors and corrected text
+- Treat chunk-level non-rate-limit failures as degradable so a single chunk can fall back to its original text without failing the whole long-draft check, while still surfacing rate-limit failures through the existing retry path
+
+## v1.8.20
+
+### Bug Fixes
+- Add underline clipping against the current badge exclusion zone and the editor bounds so underlines no longer render underneath the badge or outside the editable region
+- Establish a stable overlay z-index hierarchy with underlines below the badge, the popover above both, and the error panel above everything
+
+## v1.8.19
+
+### Bug Fixes
+- Add underline render-generation tracking so typing immediately clears stale underlines and older render passes are skipped once a newer text generation is active
+- Remove the unused underline reposition stub in favor of generation-aware clear-and-rerender behavior driven from text changes and check responses
+
+## v1.8.18
+
+### Bug Fixes
+- Replace the badge’s height-only compact/full decision with safe-space measurement so mid-height chat composers use compact mode when the last text line leaves too little bottom clearance
+- Force full-mode badges to fall back to compact outside placement whenever the bottom-right full badge would overlap the active text line
+
+## v1.8.17
+
+### Bug Fixes
+- Reuse the existing status badge DOM during scroll and resize when the widget state, error count, and compact/full mode are unchanged so transient badges no longer re-animate
+- Keep tooltip alignment updated during position-only refreshes while still forcing a full rebuild when the badge state, count, or compact mode actually changes
+
+## v1.8.16
+
+### Bug Fixes
+- Add delayed focusout badge cleanup so ready/checking/clean transient widgets disappear after blur while persistent red error badges remain visible
+- Run periodic transient-widget cleanup against the currently focused element so stale blue or spinner badges do not linger across editor switches or missed focus events
+
+## v1.8.15
+
+### Bug Fixes
+- Add a `chunked` flag to grammar check responses so chunked long-draft checks can be identified without changing the single-response checking flow
+- Preserve chunked-response metadata through fresh and cached service-worker results while keeping rate-limit and non-English early-return responses explicitly non-chunked
+
+## v1.8.14
+
+### Bug Fixes
+- Add two-layer English-only gating so non-English text is suppressed before content-script checks start and is also defensively rejected again in the service worker before cache or provider use
+- Keep non-English editors free of ready/checking badges and clear any existing underlines or stale Fix All metadata when language gating suppresses a check
+
+## v1.8.13
+
+### Bug Fixes
+- Add deterministic local punctuation detection for repeated terminal punctuation, comma-period conflicts, stray spaces before punctuation, missing spaces after punctuation, and doubled in-line spaces
+- Merge local punctuation findings ahead of API errors so obvious punctuation mistakes still appear when the model misses them, while overlapping AI punctuation results are suppressed in favor of the deterministic local rules
+
+## v1.8.12
+
+### Bug Fixes
+- Make chunked grammar checks return the validated per-chunk errors as the authoritative visible results, while keeping full-text corrected-text derivation only as a diagnostic validation pass
+- Deduplicate overlapping chunk errors at merge time and log any additional full-text derived errors for later investigation instead of surfacing them to users immediately
+
+## v1.8.11
+
+### Bug Fixes
+- Suppress one-shot Fix All oscillation follow-up errors only when the first recheck returns the just-applied suggestion text back at the same offset, while still allowing genuine new issues through without auto-reopening the panel
+- Store the exact Fix All batch text and prior error list so the first post-fix recheck can consume that metadata once and then clear it safely
+
+## v1.8.10
+
+### Bug Fixes
+- Add a verified one-shot contenteditable Fix All path that uses the AI-corrected full text when rich editors accept whole-editor replacement, while falling back to the existing sequential fix flow when they do not
+- Track recent Fix All batch metadata in element state so the follow-up oscillation suppression work can consume it safely after text changes
+
 ## v1.8.9
 
 ### Bug Fixes

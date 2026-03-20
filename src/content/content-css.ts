@@ -45,7 +45,7 @@ export const CONTENT_CSS = `
     background-repeat: repeat-x;
     background-size: 4px 4px;
     background-position: bottom;
-    z-index: 2147483647;
+    z-index: 1;
     animation: grammar-underline-in 0.3s ease-out;
     transition: opacity 0.2s, height 0.15s;
   }
@@ -76,14 +76,14 @@ export const CONTENT_CSS = `
     position: fixed;
     pointer-events: none;
     border-radius: 3px;
-    z-index: 2147483646;
+    z-index: 1;
     animation: grammar-flash-green 0.6s ease-out forwards;
   }
 
   /* ===== POPOVER ===== */
   .grammar-popover {
     position: fixed;
-    z-index: 2147483647;
+    z-index: 3;
     background: #fff;
     border: 1px solid #e2e8f0;
     border-radius: 10px;
@@ -239,7 +239,7 @@ export const CONTENT_CSS = `
   /* ===== FLOATING STATUS WIDGET (Grammarly-style) ===== */
   .grammar-widget {
     position: fixed;
-    z-index: 2147483647;
+    z-index: 2;
     pointer-events: auto;
     width: 28px;
     height: 28px;
@@ -447,7 +447,7 @@ export const CONTENT_CSS = `
   /* ===== ERROR PANEL ===== */
   .grammar-error-panel {
     position: fixed;
-    z-index: 2147483647;
+    z-index: 4;
     background: #fff;
     border: 1px solid #e2e8f0;
     border-radius: 12px;

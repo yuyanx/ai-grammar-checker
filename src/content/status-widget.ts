@@ -11,6 +11,11 @@ const widgetStates = new WeakMap<HTMLElement, {
   onClickErrors?: () => void;
   hideAt?: number;
 }>();
+const lastRenderedStates = new WeakMap<HTMLElement, {
+  state: WidgetState;
+  errorCount: number;
+  isCompact: boolean;
+}>();
 let widgetCounter = 0;
 const VIEWPORT_MARGIN = 8;
 const COMPACT_INSET = 8;
@@ -61,34 +66,74 @@ function renderWidget(element: HTMLElement): void {
   console.log("[AI Grammar Checker] updateWidget called, state:", state, "errorCount:", errorCount, "hasCallback:", !!onClickErrors);
   const containerId = getWidgetContainerId(element);
   const container = getOrCreateContainer(containerId);
-  container.innerHTML = "";
 
   // Don't show for idle state
-  if (state === "idle") return;
-  if (state === "clean" && hideAt && Date.now() >= hideAt) return;
+  if (state === "idle") {
+    container.innerHTML = "";
+    lastRenderedStates.delete(element);
+    return;
+  }
+  if (state === "clean" && hideAt && Date.now() >= hideAt) {
+    container.innerHTML = "";
+    lastRenderedStates.delete(element);
+    return;
+  }
 
   const rect = element.getBoundingClientRect();
-  const isCompact = rect.height < 44;
-  const compactAnchor = isCompact ? getCompactAnchor(element, rect) : null;
-  const anchorRect = compactAnchor?.rect || rect;
-  const compactTextRect = isCompact ? getCompactTextRect(element, rect) : rect;
+  const compactTextRect = rect.height >= 44 ? getCompactTextRect(element, rect) : rect;
+  let isCompact = shouldUseCompactWidget(rect, compactTextRect);
+  let compactAnchor = isCompact ? getCompactAnchor(element, rect) : null;
+  let anchorRect = compactAnchor?.rect || rect;
 
   // Don't show widget for hidden/invisible elements.
   // For compact editors like Instagram, the editable span can be tiny even when the
   // full composer row is visible, so gate on the chosen anchor rect instead.
-  if (anchorRect.width < 50 || anchorRect.height < 20) return;
+  if (anchorRect.width < 50 || anchorRect.height < 20) {
+    container.innerHTML = "";
+    lastRenderedStates.delete(element);
+    return;
+  }
+
+  const lastRendered = lastRenderedStates.get(element);
+  const existingWidget = container.firstElementChild instanceof HTMLElement
+    ? container.firstElementChild
+    : null;
+
+  // Use smaller widget for compact editors (e.g. comment boxes)
+  let size = isCompact ? getCompactWidgetSize(state) : 28;
+  const inset = isCompact ? COMPACT_INSET : 6;
+
+  let position = isCompact && compactAnchor
+    ? getCompactWidgetPosition(element, compactTextRect, compactAnchor, size)
+    : getCornerWidgetPosition(anchorRect, size, inset);
+
+  if (!isCompact && fullWidgetOverlapsText(position, size, compactTextRect)) {
+    isCompact = true;
+    compactAnchor = getCompactAnchor(element, rect);
+    anchorRect = compactAnchor.rect;
+    size = getCompactWidgetSize(state);
+    position = getOutsideCompactWidgetPosition(anchorRect, size, getPreferredCompactTop(anchorRect, size));
+  }
+
+  if (
+    existingWidget &&
+    lastRendered &&
+    lastRendered.state === state &&
+    lastRendered.errorCount === errorCount &&
+    lastRendered.isCompact === isCompact
+  ) {
+    existingWidget.style.top = `${position.top}px`;
+    existingWidget.style.left = `${position.left}px`;
+    positionWidgetTooltip(existingWidget);
+    return;
+  }
+
+  container.innerHTML = "";
 
   const widget = document.createElement("div");
   const dark = isDarkMode();
 
-  // Use smaller widget for compact editors (e.g. comment boxes)
-  const size = isCompact ? getCompactWidgetSize(state) : 28;
-  const inset = isCompact ? COMPACT_INSET : 6;
-
   widget.style.position = "fixed";
-  const position = isCompact && compactAnchor
-    ? getCompactWidgetPosition(element, compactTextRect, compactAnchor, size)
-    : getCornerWidgetPosition(anchorRect, size, inset);
   widget.style.top = `${position.top}px`;
   widget.style.left = `${position.left}px`;
   // Build class name including compact modifier
@@ -132,6 +177,7 @@ function renderWidget(element: HTMLElement): void {
       const current = widgetStates.get(element);
       if (!current || current.state !== "clean" || current.hideAt !== hideAt) return;
       widgetStates.set(element, { state: "idle", errorCount: 0 });
+      lastRenderedStates.delete(element);
       widget.style.opacity = "0";
       widget.style.transition = "opacity 0.3s";
       setTimeout(() => container.innerHTML = "", 300);
@@ -147,6 +193,7 @@ function renderWidget(element: HTMLElement): void {
       const current = widgetStates.get(element);
       if (!current || current.state !== "error") return;
       widgetStates.set(element, { state: "idle", errorCount: 0 });
+      lastRenderedStates.delete(element);
       widget.style.opacity = "0";
       widget.style.transition = "opacity 0.3s";
       setTimeout(() => container.innerHTML = "", 300);
@@ -155,16 +202,28 @@ function renderWidget(element: HTMLElement): void {
 
   container.appendChild(widget);
   positionWidgetTooltip(widget);
+  lastRenderedStates.set(element, { state, errorCount, isCompact });
 }
 
 export function removeWidget(element: HTMLElement): void {
   widgetStates.set(element, { state: "idle", errorCount: 0 });
+  lastRenderedStates.delete(element);
   const containerId = widgetMap.get(element);
   if (containerId) {
     const container = getOrCreateContainer(containerId);
     container.innerHTML = "";
   }
   widgetElements.delete(element);
+}
+
+export function getWidgetRect(element: HTMLElement): DOMRect | null {
+  const containerId = widgetMap.get(element);
+  if (!containerId) return null;
+
+  const container = getOrCreateContainer(containerId);
+  const widget = container.firstElementChild;
+  if (!(widget instanceof HTMLElement)) return null;
+  return widget.getBoundingClientRect();
 }
 
 /**
@@ -191,6 +250,7 @@ export function clearTransientWidgetsExcept(activeElement: HTMLElement): void {
     if (state.state === "errors" || state.state === "error") continue;
 
     widgetStates.set(element, { state: "idle", errorCount: 0 });
+    lastRenderedStates.delete(element);
     const containerId = widgetMap.get(element);
     if (!containerId) continue;
     const container = getOrCreateContainer(containerId);
@@ -205,6 +265,29 @@ function getWidgetContainerId(element: HTMLElement): string {
     widgetMap.set(element, id);
   }
   return id;
+}
+
+function shouldUseCompactWidget(rect: DOMRect, textRect: DOMRect): boolean {
+  if (rect.height < 44) return true;
+  if (rect.height >= 100) return false;
+
+  const verticalSpace = rect.bottom - textRect.bottom;
+  return verticalSpace < 36;
+}
+
+function fullWidgetOverlapsText(
+  position: { top: number; left: number },
+  size: number,
+  textRect: DOMRect
+): boolean {
+  const widgetRect = new DOMRect(position.left, position.top, size, size);
+  return rectsOverlap(widgetRect, inflateRect(textRect, 4, 4));
+}
+
+function getPreferredCompactTop(anchorRect: DOMRect, size: number): number {
+  const minTop = clamp(anchorRect.top + COMPACT_INSET, VIEWPORT_MARGIN, window.innerHeight - size - VIEWPORT_MARGIN);
+  const maxTop = clamp(anchorRect.bottom - size - COMPACT_INSET, minTop, window.innerHeight - size - VIEWPORT_MARGIN);
+  return clamp(anchorRect.top + (anchorRect.height - size) / 2, minTop, maxTop);
 }
 
 function getCornerWidgetPosition(rect: DOMRect, size: number, inset: number): { top: number; left: number } {
@@ -260,7 +343,7 @@ function getCompactWidgetPosition(
   const maxLeft = clamp(anchor.rect.right - size - COMPACT_INSET, minLeft, window.innerWidth - size - VIEWPORT_MARGIN);
   const minTop = clamp(anchor.rect.top + COMPACT_INSET, VIEWPORT_MARGIN, window.innerHeight - size - VIEWPORT_MARGIN);
   const maxTop = clamp(anchor.rect.bottom - size - COMPACT_INSET, minTop, window.innerHeight - size - VIEWPORT_MARGIN);
-  const preferredTop = clamp(anchor.rect.top + (anchor.rect.height - size) / 2, minTop, maxTop);
+  const preferredTop = getPreferredCompactTop(anchor.rect, size);
   const textBoundary = textRect.right + COMPACT_INSET;
   const rowObstacles = getCompactRowObstacles(anchor.element, editorElement, anchor.rect);
   const actionStart = getExplicitActionStart(anchor.element, editorElement, textRect.right, anchor.rect)
