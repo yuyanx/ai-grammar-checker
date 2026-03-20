@@ -27,6 +27,7 @@ export interface CheckResponse {
   requestId: string;
   errors: GrammarError[];
   correctedText?: string; // fully corrected text for "Fix All"
+  chunked?: boolean;
   error?: string;
   rateLimitedUntil?: number; // epoch ms — content script should not retry until this time
 }
@@ -52,6 +53,9 @@ export interface ElementState {
   pendingText: string | null;
   errors: GrammarError[];
   correctedText?: string;
+  fixAllAppliedText?: string;
+  fixAllPriorErrors?: GrammarError[];
+  renderGeneration: number;
   ignoredErrors: Set<string>;
   debounceTimer: number | null;
   sourceId: string;

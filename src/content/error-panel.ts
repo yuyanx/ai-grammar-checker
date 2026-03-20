@@ -18,13 +18,17 @@ export function isErrorPanelOpen(): boolean {
   return currentPanel !== null;
 }
 
+export function isErrorPanelOpenForElement(element: HTMLElement): boolean {
+  return currentPanel !== null && currentElement === element;
+}
+
 export function showErrorPanel(
   element: HTMLElement,
   errors: GrammarError[],
   ignoredErrors: Set<string>,
   elementRect: DOMRect,
   correctedText: string | undefined,
-  onAccept: () => void,
+  onAccept: (appliedText?: string, fixedErrors?: GrammarError[]) => void,
   onDismiss: (key: string) => void
 ): void {
   console.log("[AI Grammar Checker] showErrorPanel called, errors:", errors.length);
@@ -121,11 +125,12 @@ export function showErrorPanel(
     e.stopPropagation();
     e.preventDefault();
     fixAllBtn.setAttribute("disabled", "true");
-    await applyAllFixes(element, remainingErrors, list, correctedText);
+    const fixedErrors = remainingErrors.map(cloneGrammarError);
+    const appliedText = await applyAllFixes(element, remainingErrors, list, correctedText);
     remainingErrors = [];
     updateTitle(title, 0);
     showSuccessState(list, success, fixAllBtn);
-    onAccept();
+    onAccept(appliedText, fixedErrors);
   });
 
   // Close button
@@ -173,6 +178,17 @@ export function showErrorPanel(
     animateHidePanel();
   };
   element.addEventListener("input", panelInputHandler);
+}
+
+function cloneGrammarError(error: GrammarError): GrammarError {
+  return {
+    original: error.original,
+    suggestion: error.suggestion,
+    offset: error.offset,
+    length: error.length,
+    type: error.type,
+    explanation: error.explanation,
+  };
 }
 
 function createErrorItem(
@@ -232,7 +248,7 @@ async function applyAllFixes(
   errors: GrammarError[],
   listEl: HTMLElement,
   correctedText?: string
-): Promise<void> {
+): Promise<string> {
   // Animate all items out
   const items = listEl.querySelectorAll(".grammar-error-panel__item");
   items.forEach((item) => {
@@ -276,18 +292,46 @@ async function applyAllFixes(
     }
 
     element.dispatchEvent(new Event("input", { bubbles: true }));
-    return;
+    return element.value;
   } else if (element.isContentEditable) {
     element.focus();
-    // Rich-text editors like X keep internal editor state separate from the
-    // visible DOM. Replacing the entire contenteditable value in one shot can
-    // leave the visible composer frozen while the real editor state keeps
-    // changing underneath. Applying fixes one-by-one preserves the editor's
-    // own mutation flow much more reliably.
+
+    if (correctedText) {
+      const replaced = replaceContentEditableText(element, correctedText);
+      const appliedText = normalizeContentEditableFixText(getContentEditableText(element));
+      const expectedText = normalizeContentEditableFixText(correctedText);
+
+      if (replaced && appliedText === expectedText) {
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        return getContentEditableText(element);
+      }
+
+      console.log("[AI Grammar Checker] Fix All: contenteditable one-shot replacement rejected, falling back to sequential fixes");
+    }
+
     console.log("[AI Grammar Checker] Fix All: using sequential fixes for contenteditable");
     const sorted = [...errors].sort((a, b) => b.offset - a.offset);
     await applyFixesSequentially(element, sorted, 0);
+    return getContentEditableText(element);
   }
+
+  return "";
+}
+
+function replaceContentEditableText(element: HTMLElement, correctedText: string): boolean {
+  const selection = window.getSelection();
+  if (!selection) return false;
+
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  return document.execCommand("insertText", false, correctedText);
+}
+
+function normalizeContentEditableFixText(text: string): string {
+  return text.replace(/[\n\r\s]+$/, "");
 }
 
 /**

@@ -1,6 +1,7 @@
 import { GrammarError } from "../shared/types.js";
 import { getOrCreateContainer, getShadowRoot } from "./shadow-host.js";
 import { showPopover, showPopoverOnHover } from "./popover.js";
+import { getWidgetRect } from "./status-widget.js";
 import {
   buildContentEditableSnapshot,
   getContentEditableRangeForError,
@@ -24,9 +25,15 @@ export function renderErrors(
   errors: GrammarError[],
   ignoredErrors: Set<string>,
   onAccept: () => void,
-  onDismiss: (errorKey: string) => void
+  onDismiss: (errorKey: string) => void,
+  renderGeneration: number
 ): void {
-  clearErrors(element);
+  const containerId = getContainerId(element);
+  const container = getOrCreateContainer(containerId);
+  const activeGeneration = Number(container.dataset.generation || "0");
+  if (activeGeneration > renderGeneration) return;
+
+  clearErrors(element, renderGeneration);
 
   const visibleErrors = errors.filter(
     (e) => !ignoredErrors.has(errorKey(e))
@@ -38,17 +45,20 @@ export function renderErrors(
     element instanceof HTMLTextAreaElement ||
     element instanceof HTMLInputElement
   ) {
-    renderForInput(element, visibleErrors, onAccept, onDismiss);
+    renderForInput(element, visibleErrors, onAccept, onDismiss, renderGeneration);
   } else if (element.isContentEditable) {
-    renderForContentEditable(element, visibleErrors, onAccept, onDismiss);
+    renderForContentEditable(element, visibleErrors, onAccept, onDismiss, renderGeneration);
   }
 }
 
-export function clearErrors(element: HTMLElement): void {
+export function clearErrors(element: HTMLElement, renderGeneration?: number): void {
   const containerId = elementContainerMap.get(element);
   if (containerId) {
     const container = getOrCreateContainer(containerId);
     container.innerHTML = "";
+    if (renderGeneration !== undefined) {
+      container.dataset.generation = String(renderGeneration);
+    }
   }
 }
 
@@ -64,10 +74,6 @@ export function clearAllErrors(): void {
 
 export function errorKey(error: GrammarError): string {
   return `${error.offset}:${error.length}:${error.original}`;
-}
-
-export function recalculatePositions(): void {
-  // Called on scroll/resize — re-render would be needed
 }
 
 function getContainerId(element: HTMLElement): string {
@@ -120,13 +126,15 @@ function renderForInput(
   element: HTMLTextAreaElement | HTMLInputElement,
   errors: GrammarError[],
   onAccept: () => void,
-  onDismiss: (errorKey: string) => void
+  onDismiss: (errorKey: string) => void,
+  renderGeneration: number
 ): void {
   const containerId = getContainerId(element);
   const container = getOrCreateContainer(containerId);
-  container.innerHTML = "";
+  if (container.dataset.generation !== String(renderGeneration)) return;
 
   const rect = element.getBoundingClientRect();
+  const badgeRect = getWidgetRect(element);
   const computed = window.getComputedStyle(element);
 
   // Create mirror div
@@ -209,17 +217,17 @@ function renderForInput(
       spanRect.right > rect.left &&
       spanRect.left < rect.right
     ) {
-      attachUnderlineListeners(underline, error, spanRect, element, onAccept, onDismiss);
-      container.appendChild(underline);
+      if (container.dataset.generation !== String(renderGeneration)) return;
+      appendUnderlineSegments(container, underline, error, spanRect, rect, badgeRect, element, onAccept, onDismiss);
     }
   });
 
   for (const error of errors) {
     if (error.length !== 0) continue;
+    if (container.dataset.generation !== String(renderGeneration)) return;
     const anchorRect = getInputInsertionAnchorRect(measurer, error.offset, rect);
     const underline = createUnderline(error, anchorRect);
-    attachUnderlineListeners(underline, error, anchorRect, element, onAccept, onDismiss);
-    container.appendChild(underline);
+    appendUnderlineSegments(container, underline, error, anchorRect, rect, badgeRect, element, onAccept, onDismiss);
   }
 
   // Cleanup measurer
@@ -230,20 +238,23 @@ function renderForContentEditable(
   element: HTMLElement,
   errors: GrammarError[],
   onAccept: () => void,
-  onDismiss: (errorKey: string) => void
+  onDismiss: (errorKey: string) => void,
+  renderGeneration: number
 ): void {
   const containerId = getContainerId(element);
   const container = getOrCreateContainer(containerId);
-  container.innerHTML = "";
+  if (container.dataset.generation !== String(renderGeneration)) return;
 
+  const editorRect = element.getBoundingClientRect();
+  const badgeRect = getWidgetRect(element);
   const snapshot = buildContentEditableSnapshot(element);
 
   for (const error of errors) {
     const rects = getErrorClientRects(element, error, snapshot);
     for (const r of rects) {
+      if (container.dataset.generation !== String(renderGeneration)) return;
       const underline = createUnderline(error, r);
-      attachUnderlineListeners(underline, error, r, element, onAccept, onDismiss);
-      container.appendChild(underline);
+      appendUnderlineSegments(container, underline, error, r, editorRect, badgeRect, element, onAccept, onDismiss);
     }
   }
 }
@@ -259,6 +270,93 @@ function createUnderline(error: GrammarError, rect: DOMRect): HTMLElement {
   underline.style.pointerEvents = "auto";
   underline.style.cursor = "pointer";
   return underline;
+}
+
+function appendUnderlineSegments(
+  container: HTMLElement,
+  underline: HTMLElement,
+  error: GrammarError,
+  anchorRect: DOMRect,
+  editorRect: DOMRect,
+  badgeRect: DOMRect | null,
+  targetElement: HTMLElement | HTMLTextAreaElement | HTMLInputElement,
+  onAccept: () => void,
+  onDismiss: (errorKey: string) => void
+): void {
+  const segments = getUnderlineSegments(anchorRect, editorRect, badgeRect);
+  for (const segment of segments) {
+    const segmentUnderline = underline.cloneNode() as HTMLElement;
+    segmentUnderline.style.left = `${segment.left}px`;
+    segmentUnderline.style.top = `${segment.top}px`;
+    segmentUnderline.style.width = `${segment.width}px`;
+    segmentUnderline.style.height = `${segment.height}px`;
+    attachUnderlineListeners(segmentUnderline, error, anchorRect, targetElement, onAccept, onDismiss);
+    container.appendChild(segmentUnderline);
+  }
+}
+
+function getUnderlineSegments(
+  rect: DOMRect,
+  editorRect: DOMRect,
+  badgeRect: DOMRect | null
+): DOMRect[] {
+  const clipped = intersectRects(rect, editorRect);
+  if (!clipped) return [];
+
+  if (!badgeRect) return [clipped];
+
+  const exclusionRect = inflateRect(badgeRect, 4, 4);
+  if (!rectsOverlap(clipped, exclusionRect)) {
+    return [clipped];
+  }
+
+  const segments: DOMRect[] = [];
+  if (exclusionRect.left > clipped.left) {
+    segments.push(new DOMRect(
+      clipped.left,
+      clipped.top,
+      exclusionRect.left - clipped.left,
+      clipped.height
+    ));
+  }
+  if (exclusionRect.right < clipped.right) {
+    segments.push(new DOMRect(
+      exclusionRect.right,
+      clipped.top,
+      clipped.right - exclusionRect.right,
+      clipped.height
+    ));
+  }
+
+  return segments.filter((segment) => segment.width >= 2 && segment.height >= 2);
+}
+
+function intersectRects(a: DOMRect, b: DOMRect): DOMRect | null {
+  const left = Math.max(a.left, b.left);
+  const top = Math.max(a.top, b.top);
+  const right = Math.min(a.right, b.right);
+  const bottom = Math.min(a.bottom, b.bottom);
+
+  if (right <= left || bottom <= top) return null;
+  return new DOMRect(left, top, right - left, bottom - top);
+}
+
+function inflateRect(rect: DOMRect, xPad: number, yPad: number): DOMRect {
+  return new DOMRect(
+    rect.left - xPad,
+    rect.top - yPad,
+    rect.width + xPad * 2,
+    rect.height + yPad * 2
+  );
+}
+
+function rectsOverlap(a: DOMRect, b: DOMRect): boolean {
+  return !(
+    a.right <= b.left ||
+    a.left >= b.right ||
+    a.bottom <= b.top ||
+    a.top >= b.bottom
+  );
 }
 
 function getErrorClientRects(
