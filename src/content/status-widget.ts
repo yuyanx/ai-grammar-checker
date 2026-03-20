@@ -59,6 +59,10 @@ export function refreshWidget(element: HTMLElement): void {
   renderWidget(element, true);
 }
 
+export function getWidgetState(element: HTMLElement): WidgetState | null {
+  return widgetStates.get(element)?.state ?? null;
+}
+
 export function getWidgetRect(element: HTMLElement): DOMRect | null {
   const containerId = widgetMap.get(element);
   if (!containerId) return null;

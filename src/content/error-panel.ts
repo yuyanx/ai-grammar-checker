@@ -255,24 +255,18 @@ async function applyAllFixes(
   if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
     element.focus();
 
-    // Use AI-provided correctedText if available, otherwise build from individual fixes
-    let value: string;
-    if (correctedText) {
-      value = correctedText;
-    } else {
-      const sorted = [...errors].sort((a, b) => b.offset - a.offset);
-      value = element.value;
-      for (const err of sorted) {
-        let idx = err.offset;
-        if (idx < 0 || value.substring(idx, idx + err.original.length) !== err.original) {
-          idx = value.indexOf(err.original);
-        }
-        if (idx === -1) continue;
-        const before = value.substring(0, idx);
-        const after = value.substring(idx + err.original.length);
-        value = before + err.suggestion + after;
-      }
-    }
+    const currentValue = element.value;
+    const surfacedValue = buildTextareaValueFromErrors(currentValue, errors);
+
+    // The panel's surfaced issues are the authoritative UI contract.
+    // correctedText can lag behind merged local/derived issues on follow-up checks,
+    // which makes Fix All look like a no-op on editors such as GitHub comments.
+    const value =
+      surfacedValue !== currentValue
+        ? surfacedValue
+        : correctedText && correctedText !== currentValue
+          ? correctedText
+          : currentValue;
 
     // Try execCommand for undo support: select all text, then insert corrected version
     element.setSelectionRange(0, element.value.length);
@@ -313,6 +307,30 @@ async function applyAllFixes(
 
     await applyFixesSequentially(element, sorted, 0);
   }
+}
+
+function buildTextareaValueFromErrors(value: string, errors: GrammarError[]): string {
+  const sorted = [...errors].sort((a, b) => b.offset - a.offset);
+  let nextValue = value;
+
+  for (const err of sorted) {
+    let idx = err.offset;
+    if (err.length === 0) {
+      if (idx < 0 || idx > nextValue.length) {
+        idx = nextValue.length;
+      }
+    } else if (idx < 0 || nextValue.substring(idx, idx + err.original.length) !== err.original) {
+      idx = nextValue.indexOf(err.original);
+    }
+
+    if (idx === -1) continue;
+
+    const before = nextValue.substring(0, idx);
+    const after = nextValue.substring(idx + err.original.length);
+    nextValue = before + err.suggestion + after;
+  }
+
+  return nextValue;
 }
 
 /**

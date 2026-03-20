@@ -1,7 +1,7 @@
 import { GrammarError, CheckRequest, CheckResponse, ElementState, PrewarmResponse } from "../shared/types.js";
 import { getSettings, isConfigured } from "../shared/storage.js";
 import { renderErrors, clearErrors, clearAllErrors, errorKey } from "./underline-renderer.js";
-import { updateWidget, removeWidget, removeAllWidgets, refreshWidget, clearTransientWidgetsExcept } from "./status-widget.js";
+import { updateWidget, removeWidget, removeAllWidgets, refreshWidget, clearTransientWidgetsExcept, getWidgetState } from "./status-widget.js";
 import { showPopover } from "./popover.js";
 import { showErrorPanel, hideErrorPanel, getErrorPanelElement, isErrorPanelOpenForElement } from "./error-panel.js";
 import { getContentEditableText } from "./contenteditable-snapshot.js";
@@ -19,7 +19,11 @@ let lastUrl = location.href;
 let sourceCounter = 0;
 let backgroundPrewarmed = false;
 let backgroundPrewarmPromise: Promise<void> | null = null;
+let runtimeInvalidated = false;
+let maintenanceIntervalId: number | null = null;
 const FOCUS_CHECK_DELAY_MS = 150;
+const CHECK_REQUEST_TIMEOUT_MS = 15000;
+const STALE_PENDING_THRESHOLD_MS = 20000;
 
 // Track recently applied fixes to prevent oscillation (suggestion reverting back to original)
 // Maps element → Set of "suggestion→original" pairs that should be suppressed
@@ -135,6 +139,12 @@ function findEditableRoot(target: HTMLElement): HTMLElement | null {
 }
 
 export async function startMonitoring(): Promise<void> {
+  runtimeInvalidated = false;
+  if (!isRuntimeAvailable()) {
+    handleRuntimeInvalidation("startup");
+    return;
+  }
+
   console.log("[AI Grammar Checker] startMonitoring called");
   const settings = await getSettings();
   debounceMs = settings.debounceMs;
@@ -175,7 +185,11 @@ export async function startMonitoring(): Promise<void> {
   // (e.g. LinkedIn's editor, Medium, Notion). When the user clicks into a field,
   // we check if it's a text input we should attach to.
   document.addEventListener("focusin", (e) => {
-    if (!enabled) return;
+    if (runtimeInvalidated || !enabled) return;
+    if (!isRuntimeAvailable()) {
+      handleRuntimeInvalidation("focusin");
+      return;
+    }
     const target = e.target;
     if (!(target instanceof HTMLElement)) return;
 
@@ -204,6 +218,7 @@ export async function startMonitoring(): Promise<void> {
     if (elementStates.has(el)) {
       const state = elementStates.get(el);
       if (state) clearFocusOutTimer(state);
+      recoverElementIfStuck(el, true);
       clearTransientWidgetsExcept(el);
       void prewarmBackground();
       requestAnimationFrame(() => {
@@ -229,9 +244,23 @@ export async function startMonitoring(): Promise<void> {
 
   window.addEventListener("scroll", recalculate, true);
   window.addEventListener("resize", recalculate);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      recoverVisiblePendingChecks();
+    }
+  });
+  window.addEventListener("pageshow", () => {
+    recoverVisiblePendingChecks();
+  });
 
   // Periodic maintenance: cleanup + rescan for missed editors
-  setInterval(() => {
+  maintenanceIntervalId = window.setInterval(() => {
+    if (runtimeInvalidated) return;
+    if (!isRuntimeAvailable()) {
+      handleRuntimeInvalidation("maintenance");
+      return;
+    }
+
     // Detect URL change (SPA navigation) — nuclear cleanup
     if (location.href !== lastUrl) {
       lastUrl = location.href;
@@ -264,6 +293,10 @@ export async function startMonitoring(): Promise<void> {
     }
 
     clearTransientWidgetsExcept(getActiveTrackedElement() ?? getErrorPanelElement());
+    recoverVisiblePendingChecks(true);
+    for (const el of trackedElements) {
+      recoverElementIfStuck(el);
+    }
 
     // Periodic rescan: catch editors that might have been missed by MutationObserver/focusin.
     // This is a safety net for complex SPAs (LinkedIn, etc.) where editors are created
@@ -291,6 +324,7 @@ export async function startMonitoring(): Promise<void> {
 }
 
 function scanForElements(root: HTMLElement): void {
+  if (runtimeInvalidated) return;
   const elements: HTMLElement[] = root.matches?.(TEXT_INPUT_SELECTORS) ? [root] : [];
   root.querySelectorAll<HTMLElement>(TEXT_INPUT_SELECTORS).forEach((el) => elements.push(el));
 
@@ -329,9 +363,11 @@ function attachListeners(element: HTMLElement): void {
   const state: ElementState = {
     lastText: "",
     pendingText: null,
+    pendingStartedAt: null,
     errors: [],
     ignoredErrors: new Set(),
     debounceTimer: null,
+    requestTimeoutTimer: null,
     focusOutTimer: null,
     checkGeneration: 0,
     renderGeneration: 0,
@@ -341,7 +377,11 @@ function attachListeners(element: HTMLElement): void {
   elementStates.set(element, state);
 
   const handler = () => {
-    if (!enabled) return;
+    if (runtimeInvalidated || !enabled) return;
+    if (!isRuntimeAvailable()) {
+      handleRuntimeInvalidation("element handler");
+      return;
+    }
 
     const currentState = elementStates.get(element);
     if (!currentState) return;
@@ -462,6 +502,10 @@ function attachListeners(element: HTMLElement): void {
 }
 
 async function prewarmBackground(): Promise<void> {
+  if (runtimeInvalidated || !isRuntimeAvailable()) {
+    handleRuntimeInvalidation("prewarm");
+    return;
+  }
   if (backgroundPrewarmed) return;
   if (backgroundPrewarmPromise) return backgroundPrewarmPromise;
 
@@ -472,7 +516,11 @@ async function prewarmBackground(): Promise<void> {
       }
       backgroundPrewarmed = true;
     })
-    .catch(() => {
+    .catch((err) => {
+      if (isRuntimeInvalidationError(err)) {
+        handleRuntimeInvalidation(err);
+        return;
+      }
       // Ignore prewarm failures — normal checks will still work.
     })
     .finally(() => {
@@ -507,7 +555,15 @@ function primeElementOnFocus(element: HTMLElement): void {
     return;
   }
 
-  if (text === state.lastText || text === state.pendingText) return;
+  if (text === state.lastText) return;
+  if (text === state.pendingText) {
+    if (isPendingRequestStale(state)) {
+      console.warn("[AI Grammar Checker] Clearing stale pending check on focus");
+      invalidatePendingRequest(state, text);
+    } else {
+      return;
+    }
+  }
 
   updateWidget(element, "checking");
   if (state.debounceTimer !== null) {
@@ -519,6 +575,11 @@ function primeElementOnFocus(element: HTMLElement): void {
 }
 
 async function checkElement(element: HTMLElement, autoShowPanel = false, retryCount = 0): Promise<void> {
+  if (runtimeInvalidated || !isRuntimeAvailable()) {
+    handleRuntimeInvalidation("checkElement");
+    return;
+  }
+
   if (configuredCache === null) configuredCache = await isConfigured();
   if (!configuredCache) {
     console.log("[AI Grammar Checker] API key not configured, skipping check");
@@ -555,10 +616,20 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
 
   // Skip unchanged text (normalized comparison to avoid spurious rechecks
   // from contenteditable editors that add/remove trailing whitespace)
-  if (text === state.lastText || text === state.pendingText) return;
+  if (text === state.lastText) return;
+  if (text === state.pendingText) {
+    if (isPendingRequestStale(state)) {
+      console.warn("[AI Grammar Checker] Clearing stale pending check before new check");
+      invalidatePendingRequest(state, text);
+    } else {
+      return;
+    }
+  }
 
   state.pendingText = text;
+  state.pendingStartedAt = Date.now();
   const checkGeneration = ++state.checkGeneration;
+  clearRequestTimeout(state);
 
   // Show checking widget
   console.log("[AI Grammar Checker] Checking text:", text.substring(0, 50) + (text.length > 50 ? "..." : ""));
@@ -574,15 +645,35 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
       sourceId: state.sourceId,
     };
 
+    state.requestTimeoutTimer = window.setTimeout(() => {
+      const latestState = elementStates.get(element);
+      if (!latestState || latestState.checkGeneration !== checkGeneration) {
+        return;
+      }
+      console.warn("[AI Grammar Checker] Check request timed out, recovering pending state");
+      invalidatePendingRequest(latestState, text);
+      updateWidget(element, "error");
+      if (normalizeText(getElementText(element)) === text) {
+        setTimeout(() => {
+          const retryState = elementStates.get(element);
+          if (!retryState) return;
+          if (normalizeText(getElementText(element)) !== text) return;
+          checkElement(element, autoShowPanel, Math.min(retryCount + 1, 1));
+        }, 300);
+      }
+    }, CHECK_REQUEST_TIMEOUT_MS);
+
     const response: CheckResponse = await chrome.runtime.sendMessage(request);
     const latestState = elementStates.get(element);
     if (!latestState || latestState.checkGeneration !== checkGeneration) {
       return;
     }
+    clearRequestTimeout(latestState);
 
     if (response.error) {
       if (latestState.pendingText === text) {
         latestState.pendingText = null;
+        latestState.pendingStartedAt = null;
       }
       const isRateLimit = response.error.includes("Rate limit") || response.rateLimitedUntil;
       if (!isRateLimit && retryCount < 1) {
@@ -609,6 +700,7 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
     if (currentText !== text) {
       if (latestState.pendingText === text) {
         latestState.pendingText = null;
+        latestState.pendingStartedAt = null;
       }
       console.log("[AI Grammar Checker] Text changed during check, discarding result");
       if (latestState.debounceTimer === null) {
@@ -620,6 +712,7 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
     latestState.lastText = text;
     if (latestState.pendingText === text) {
       latestState.pendingText = null;
+      latestState.pendingStartedAt = null;
     }
 
     // Filter out errors that would reverse a recently applied fix (prevents oscillation)
@@ -652,10 +745,15 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
     if (!latestState || latestState.checkGeneration !== checkGeneration) {
       return;
     }
+    clearRequestTimeout(latestState);
     if (latestState.pendingText === text) {
       latestState.pendingText = null;
+      latestState.pendingStartedAt = null;
     }
-    if (err?.message?.includes("Extension context invalidated")) return;
+    if (isRuntimeInvalidationError(err) || !isRuntimeAvailable()) {
+      handleRuntimeInvalidation(err);
+      return;
+    }
     if (retryCount < 1) {
       console.warn("[AI Grammar Checker] Error, retrying in 2s:", err);
       updateWidget(element, "error");
@@ -670,6 +768,54 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
       updateWidget(element, "idle");
     }
   }
+}
+
+function isRuntimeAvailable(): boolean {
+  try {
+    return typeof chrome !== "undefined" && Boolean(chrome.runtime?.id);
+  } catch {
+    return false;
+  }
+}
+
+function isRuntimeInvalidationError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  return (
+    message.includes("Extension context invalidated") ||
+    message.includes("Extension context was invalidated") ||
+    message.includes("Receiving end does not exist")
+  );
+}
+
+function handleRuntimeInvalidation(reason?: unknown): void {
+  if (runtimeInvalidated) return;
+
+  runtimeInvalidated = true;
+  backgroundPrewarmed = false;
+  backgroundPrewarmPromise = null;
+  configuredCache = false;
+  console.warn("[AI Grammar Checker] Runtime invalidated; refresh tab to restore checking", reason);
+
+  if (maintenanceIntervalId !== null) {
+    clearInterval(maintenanceIntervalId);
+    maintenanceIntervalId = null;
+  }
+
+  for (const element of trackedElements) {
+    const state = elementStates.get(element);
+    if (state) {
+      state.pendingText = null;
+      state.pendingStartedAt = null;
+      state.lastText = "";
+      state.errors = [];
+      cleanupElementState(element);
+    }
+    clearErrors(element);
+    removeWidget(element);
+  }
+
+  trackedElements.clear();
+  removeAllWidgets();
 }
 
 function getSourceId(element: HTMLElement): string {
@@ -699,12 +845,108 @@ function clearPendingCheck(state: ElementState): void {
     clearTimeout(state.debounceTimer);
     state.debounceTimer = null;
   }
+  clearRequestTimeout(state);
 }
 
 function clearFocusOutTimer(state: ElementState): void {
   if (state.focusOutTimer !== null) {
     clearTimeout(state.focusOutTimer);
     state.focusOutTimer = null;
+  }
+}
+
+function clearRequestTimeout(state: ElementState): void {
+  if (state.requestTimeoutTimer !== null) {
+    clearTimeout(state.requestTimeoutTimer);
+    state.requestTimeoutTimer = null;
+  }
+}
+
+function invalidatePendingRequest(state: ElementState, pendingText?: string): void {
+  clearRequestTimeout(state);
+  if (!pendingText || state.pendingText === pendingText) {
+    state.pendingText = null;
+    state.pendingStartedAt = null;
+  }
+  state.checkGeneration += 1;
+}
+
+function recoverVisiblePendingChecks(onlyStale = false): void {
+  for (const element of trackedElements) {
+    if (!element.isConnected) continue;
+    const state = elementStates.get(element);
+    if (!state || !state.pendingText) continue;
+    if (onlyStale && !isPendingRequestStale(state)) continue;
+
+    const currentText = normalizeText(getElementText(element));
+    if (currentText !== state.pendingText) {
+      invalidatePendingRequest(state);
+      if (isElementActive(element)) {
+        updateWidget(element, currentText.trim().length >= 10 ? "ready" : "idle");
+      } else {
+        updateWidget(element, "idle");
+      }
+      continue;
+    }
+
+    console.warn("[AI Grammar Checker] Recovering stale pending check after tab became visible");
+    invalidatePendingRequest(state, currentText);
+    if (currentText.trim().length >= 10) {
+      void checkElement(element);
+    } else if (isElementActive(element)) {
+      updateWidget(element, "ready");
+    } else {
+      updateWidget(element, "idle");
+    }
+  }
+}
+
+function isPendingRequestStale(state: ElementState): boolean {
+  return state.pendingStartedAt !== null && Date.now() - state.pendingStartedAt >= STALE_PENDING_THRESHOLD_MS;
+}
+
+function recoverElementIfStuck(element: HTMLElement, forceRecheck = false): void {
+  const state = elementStates.get(element);
+  if (!state) return;
+  if (getWidgetState(element) !== "checking") return;
+
+  if (state.pendingText) {
+    if (isPendingRequestStale(state)) {
+      console.warn("[AI Grammar Checker] Recovering stale checking widget with pending text");
+      const pendingText = state.pendingText;
+      invalidatePendingRequest(state, pendingText);
+      if (normalizeText(getElementText(element)) === pendingText && pendingText.trim().length >= 10) {
+        void checkElement(element);
+      } else if (isElementActive(element)) {
+        updateWidget(element, "ready");
+      } else {
+        updateWidget(element, "idle");
+      }
+    }
+    return;
+  }
+
+  const currentText = normalizeText(getElementText(element));
+  const visibleErrors = state.errors.filter(
+    (e) => !state.ignoredErrors.has(errorKey(e))
+  );
+
+  console.warn("[AI Grammar Checker] Recovering desynced checking widget without pending request");
+  if (visibleErrors.length > 0) {
+    updateWidget(element, "errors", visibleErrors.length, () => {
+      openErrorPanelForElement(element);
+    });
+    return;
+  }
+
+  if (!currentText.trim() || currentText.trim().length < 10) {
+    updateWidget(element, isElementActive(element) ? "ready" : "idle");
+    return;
+  }
+
+  updateWidget(element, isElementActive(element) ? "ready" : "idle");
+  if (forceRecheck || isElementActive(element)) {
+    void checkElement(element);
   }
 }
 

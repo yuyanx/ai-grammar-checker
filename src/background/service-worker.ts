@@ -27,6 +27,10 @@ let cachedSettings: Awaited<ReturnType<typeof getSettings>> | null = null;
 let settingsCacheTime = 0;
 const SETTINGS_CACHE_TTL = 30_000; // 30 seconds
 
+chrome.runtime.onInstalled.addListener(async () => {
+  await reinjectContentScriptsIntoExistingTabs();
+});
+
 async function getCachedSettings() {
   if (cachedSettings && Date.now() - settingsCacheTime < SETTINGS_CACHE_TTL) {
     return cachedSettings;
@@ -34,6 +38,26 @@ async function getCachedSettings() {
   cachedSettings = await getSettings();
   settingsCacheTime = Date.now();
   return cachedSettings;
+}
+
+async function reinjectContentScriptsIntoExistingTabs(): Promise<void> {
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    if (!tab.id || !isInjectableTabUrl(tab.url)) continue;
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        files: ["content/index.js"],
+      });
+    } catch {
+      // Ignore restricted pages and transient tab races.
+    }
+  }
+}
+
+function isInjectableTabUrl(url?: string): boolean {
+  if (!url) return false;
+  return /^https?:\/\//i.test(url);
 }
 
 // Invalidate settings cache when settings change

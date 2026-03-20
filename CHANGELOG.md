@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.12.15
+
+### Bug Fixes
+- Remove stale extension shadow hosts before a reinjected content script starts, so dead grey checking widgets from an invalidated old script do not linger alongside the fresh widget
+- Make textarea Fix All prioritize the currently surfaced issue list over stale `correctedText`, so follow-up Fix All clicks on GitHub comment and Copilot-style editors no longer become no-ops after the first pass
+
+## v1.12.14
+
+### Bug Fixes
+- Detect stale tabs whose old content script lost its extension runtime, clear the dead grey checking widget, and re-inject the current content script into existing tabs after an extension reload/update so old pages no longer depend on a manual refresh to recover
+
+## v1.12.13
+
+### Bug Fixes
+- Add a stale pending-check recovery guard on focus and periodic maintenance, so old tabs recover from stuck grey checking states even when the normal visibility restore path is missed
+
+## v1.12.12
+
+### Bug Fixes
+- Recover from stuck backgrounded checks by timing out hung content-script grammar requests and retrying them when the tab becomes visible again, so the grey checking badge no longer spins forever until a manual refresh
+
 ## v1.12.11
 
 ### Bug Fixes
