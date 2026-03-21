@@ -527,7 +527,10 @@ export async function startMonitoring(): Promise<void> {
   };
 
   window.addEventListener("scroll", recalculate, true);
+  document.addEventListener("scroll", recalculate, true);
   window.addEventListener("resize", recalculate);
+  window.visualViewport?.addEventListener("scroll", recalculate);
+  window.visualViewport?.addEventListener("resize", recalculate);
   document.addEventListener("selectionchange", () => {
     if (runtimeInvalidated || !enabled) return;
     const host = location.hostname.toLowerCase();

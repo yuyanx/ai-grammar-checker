@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.12.30
+
+### Bug Fixes
+- Keep row/chat composer badges on one stable control-row slot across ready, checking, and error states, so ChatGPT-style composer bars stop jumping onto the send button or moving above it as the composer height changes
+- Use the actual focused editable strip for widget visibility and add stronger scroll/viewport refresh handling, so ready/checking badges on GitHub, X, and similar composers move with the editor and hide once the real input strip scrolls offscreen
+
 ## v1.12.29
 
 ### Bug Fixes
