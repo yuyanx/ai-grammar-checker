@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.12.31
+
+### Bug Fixes
+- Keep wide chat and email composers eligible for the stable compact control-row slot even after the editor grows taller, so Gmail and ChatGPT-style reply bars stop flipping from the inline-right-safe dot to overlapping large badges near the send button
+- Align compact control-row detection with the same wide-composer eligibility rule, so row/chat badge placement remains stable as the composer height changes while typing
+
 ## v1.12.30
 
 ### Bug Fixes

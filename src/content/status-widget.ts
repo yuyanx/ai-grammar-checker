@@ -45,6 +45,8 @@ const EXPANDED_WIDGET_SOURCE_MAX_HEIGHT = 72;
 const CONTROL_ROW_GROUP_TOLERANCE = 28;
 const TRAILING_CLUSTER_GAP = 28;
 const LARGE_ROW_COMPOSER_MIN_HEIGHT = 96;
+const WIDE_STABLE_COMPACT_MIN_WIDTH = 420;
+const WIDE_STABLE_COMPACT_MAX_HEIGHT = 720;
 
 /**
  * Show or update the floating status widget near a text field.
@@ -837,7 +839,19 @@ function getStableCompactAnchor(element: HTMLElement, fallbackRect: DOMRect): St
 }
 
 function isStableCompactAnchorRect(rect: DOMRect): boolean {
-  return rect.width >= 220 && rect.height >= 32 && rect.height <= STABLE_COMPACT_MAX_HEIGHT;
+  return (
+    rect.width >= 220 &&
+    rect.height >= 32 &&
+    (rect.height <= STABLE_COMPACT_MAX_HEIGHT || isWideStableCompactAnchorRect(rect))
+  );
+}
+
+function isWideStableCompactAnchorRect(rect: DOMRect): boolean {
+  return (
+    rect.width >= WIDE_STABLE_COMPACT_MIN_WIDTH &&
+    rect.height <= WIDE_STABLE_COMPACT_MAX_HEIGHT &&
+    rect.width > rect.height * 1.6
+  );
 }
 
 function getWidgetAnchor(element: HTMLElement, fallbackRect: DOMRect): { element: HTMLElement; rect: DOMRect } {
@@ -920,9 +934,14 @@ function getSiteSpecificExpandedAnchor(
 }
 
 function isUsableCompactAnchor(rect: DOMRect, fallbackRect: DOMRect): boolean {
-  if (rect.width <= fallbackRect.width + 8) return false;
+  // Allow anchors that are effectively the same visible composer shell as the
+  // fallback rect. Large row composers (Gmail reply, ChatGPT, GitHub Copilot)
+  // often use the wrapper rect as the fallback geometry, and excluding same-size
+  // wrappers makes compact control-row detection flap as the active editable
+  // grows or shrinks while typing.
+  if (rect.width < fallbackRect.width - 8) return false;
   if (rect.height < fallbackRect.height - 8) return false;
-  if (rect.height > STABLE_COMPACT_MAX_HEIGHT) return false;
+  if (!isStableCompactAnchorRect(rect)) return false;
   if (rect.top > fallbackRect.top + 12) return false;
   if (rect.bottom < fallbackRect.bottom - 12) return false;
   if (rect.left > fallbackRect.left + 16) return false;
@@ -936,7 +955,7 @@ function hasCompactRowControls(
   fallbackRect: DOMRect,
   anchorRect: DOMRect
 ): boolean {
-  if (anchorRect.height > STABLE_COMPACT_MAX_HEIGHT) return false;
+  if (!isStableCompactAnchorRect(anchorRect)) return false;
 
   const rowMidY = fallbackRect.top + fallbackRect.height / 2;
   const interactiveSelector = [
