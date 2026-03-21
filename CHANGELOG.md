@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.12.29
+
+### Bug Fixes
+- Use the actual focused editable rect for widget visibility while letting large composers climb to a larger expanded anchor, so GitHub/X-style composers stay attached instead of falling into the compact outside-left fallback and stale badges hide once the real input strip scrolls offscreen
+- Give inline comment/chat bars one stable compact slot anchored to the row itself instead of the live text line, so compact badges stop reallocating vertically or jumping between placements as the status changes
+
 ## v1.12.28
 
 ### Bug Fixes

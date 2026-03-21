@@ -373,6 +373,9 @@ function getCompactWidgetPosition(
   const minTop = clamp(anchor.rect.top + COMPACT_INSET, VIEWPORT_MARGIN, window.innerHeight - size - VIEWPORT_MARGIN);
   const maxTop = clamp(anchor.rect.bottom - size - COMPACT_INSET, minTop, window.innerHeight - size - VIEWPORT_MARGIN);
   const preferredTop = clamp(sourceRect.top + (sourceRect.height - size) / 2, minTop, maxTop);
+  if (isInlineRowRect(anchor.rect)) {
+    return getInlineRightSafeCompactPosition(editorElement, anchor, size, minLeft, maxLeft, minTop, maxTop);
+  }
   const stableActionStart = getStableCompactActionStart(anchor.element, editorElement, sourceRect, anchor.rect);
   if (stableActionStart !== null && isStableCompactAnchorRect(anchor.rect)) {
     const stableLeft = clamp(stableActionStart - size - COMPACT_ACTION_GAP, minLeft, maxLeft);
@@ -428,6 +431,41 @@ function getCompactWidgetPosition(
   }
 
   return outsidePosition;
+}
+
+function getInlineRightSafeCompactPosition(
+  editorElement: HTMLElement,
+  anchor: { element: HTMLElement; rect: DOMRect },
+  size: number,
+  minLeft: number,
+  maxLeft: number,
+  minTop: number,
+  maxTop: number
+): { top: number; left: number } {
+  const preferredTop = clamp(
+    anchor.rect.top + (anchor.rect.height - size) / 2,
+    minTop,
+    maxTop
+  );
+  const obstacles = [
+    ...getCompactRowObstacles(anchor.element, editorElement, anchor.rect),
+    ...getEmbeddedControlObstacles(editorElement, anchor.rect, anchor.rect),
+  ];
+  const actionStart = getExplicitActionStart(anchor.element, editorElement, anchor.rect.left, anchor.rect)
+    ?? getInlineActionStart(obstacles, anchor.rect.left, anchor.rect);
+
+  if (actionStart !== null) {
+    const left = clamp(actionStart - size - COMPACT_ACTION_GAP, minLeft, maxLeft);
+    const candidate = new DOMRect(left, preferredTop, size, size);
+    if (isWithinRect(candidate, anchor.rect) && candidate.right + COMPACT_ACTION_GAP <= actionStart + 1) {
+      return { top: preferredTop, left };
+    }
+  }
+
+  return {
+    top: preferredTop,
+    left: clamp(anchor.rect.right - size - COMPACT_INSET, minLeft, maxLeft),
+  };
 }
 
 function shouldForceCompactPresentation(
@@ -616,10 +654,6 @@ function getWidgetAnchor(element: HTMLElement, fallbackRect: DOMRect): { element
     return siteSpecificAnchor;
   }
 
-  if (fallbackRect.width >= 120 && fallbackRect.height >= 28) {
-    return { element, rect: fallbackRect };
-  }
-
   let current = element.parentElement;
   let depth = 0;
   while (current && depth < 12) {
@@ -629,6 +663,10 @@ function getWidgetAnchor(element: HTMLElement, fallbackRect: DOMRect): { element
     }
     current = current.parentElement;
     depth += 1;
+  }
+
+  if (fallbackRect.width >= 120 && fallbackRect.height >= 28) {
+    return { element, rect: fallbackRect };
   }
 
   return { element, rect: fallbackRect };
@@ -1010,7 +1048,7 @@ function rectApproximatelyEquals(a: DOMRect, b: DOMRect): boolean {
 
 function getWidgetSource(element: HTMLElement): { element: HTMLElement; rect: DOMRect } {
   const directRect = element.getBoundingClientRect();
-  const activeSource = getActiveEditableSource(element);
+  const activeSource = getActiveEditableSource(element) ?? getBestRenderableEditableDescendant(element);
   if (!activeSource) {
     return { element, rect: directRect };
   }
@@ -1024,11 +1062,57 @@ function getWidgetSource(element: HTMLElement): { element: HTMLElement; rect: DO
     return { element, rect: directRect };
   }
 
-  if (isInlineRowRect(directRect)) {
-    return { element: activeSource, rect: directRect };
-  }
-
   return { element: activeSource, rect: activeRect };
+}
+
+function getBestRenderableEditableDescendant(root: HTMLElement): HTMLElement | null {
+  const selector = [
+    "textarea",
+    "input[type='text']",
+    "input[type='search']",
+    "input:not([type])",
+    "[contenteditable='true']",
+    "[contenteditable='']",
+    "[contenteditable='plaintext-only']",
+    "[role='textbox']",
+    "[spellcheck='true']",
+    "[aria-multiline='true']",
+  ].join(", ");
+
+  const candidates = Array.from(root.querySelectorAll<HTMLElement>(selector))
+    .filter((candidate) => isRenderableEditableCandidate(candidate))
+    .filter((candidate) => {
+      const rect = candidate.getBoundingClientRect();
+      return rect.width >= 4 && rect.height >= 4;
+    });
+
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => scoreRenderableEditableCandidate(b, root) - scoreRenderableEditableCandidate(a, root));
+  return candidates[0] ?? null;
+}
+
+function scoreRenderableEditableCandidate(candidate: HTMLElement, root: HTMLElement): number {
+  const rect = candidate.getBoundingClientRect();
+  const role = (candidate.getAttribute("role") || "").toLowerCase();
+  let score = Math.min(rect.width * rect.height, 400000) / 1000;
+
+  if (candidate.isContentEditable) score += 220;
+  if (candidate.getAttribute("spellcheck") === "true") score += 80;
+  if ((candidate.getAttribute("aria-multiline") || "").toLowerCase() === "true") score += 80;
+  if (role === "textbox") score += 60;
+  if (candidate instanceof HTMLTextAreaElement) score += 120;
+  if (candidate instanceof HTMLInputElement) score += 40;
+
+  let depth = 0;
+  let current: HTMLElement | null = candidate;
+  while (current && current !== root && depth < 12) {
+    depth += 1;
+    current = current.parentElement;
+  }
+  score -= depth * 6;
+
+  return score;
 }
 
 function isInlineRowRect(rect: DOMRect): boolean {

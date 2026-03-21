@@ -103,11 +103,22 @@ function isEditableElement(el: HTMLElement): boolean {
   return false;
 }
 
+function isDirectlyEditableElement(el: HTMLElement): boolean {
+  if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) return true;
+  if (el.isContentEditable) return true;
+  if (el.getAttribute("spellcheck") === "true") return true;
+  if ((el.getAttribute("aria-multiline") || "").toLowerCase() === "true") return true;
+  return false;
+}
+
 /**
  * Find the best editable element from a focusin target.
  * Walks up the DOM to find the root editor element.
  */
 function findEditableRoot(target: HTMLElement): HTMLElement | null {
+  const host = location.hostname.toLowerCase();
+  const isLinkedIn = host === "linkedin.com" || host.endsWith(".linkedin.com");
+
   // LinkedIn post compose frequently focuses a placeholder/modal shell before the
   // real textbox exists or before the inner editable gets focus. Resolve that
   // first so we do not attach to the wrong wrapper.
@@ -119,6 +130,15 @@ function findEditableRoot(target: HTMLElement): HTMLElement | null {
   // 1. Try matching our selectors directly (includes role=textbox)
   let matched = target.closest<HTMLElement>(TEXT_INPUT_SELECTORS);
   if (matched) {
+    if (isLinkedIn && looksLikeLinkedInComposeTextbox(matched) && !isDirectlyEditableElement(matched)) {
+      const shell = findLinkedInComposeShell(matched) ?? matched;
+      const resolved = findLinkedInComposeTextboxInShell(shell);
+      if (resolved && resolved !== matched) {
+        return resolved;
+      }
+      scheduleLinkedInComposeResolution(matched);
+      return null;
+    }
     return matched;
   }
 
@@ -183,8 +203,11 @@ function findLinkedInComposeTextboxInShell(shell: HTMLElement): HTMLElement | nu
 
   if (candidates.length === 0) return null;
 
-  candidates.sort((a, b) => scoreLinkedInComposeTextbox(b, shell) - scoreLinkedInComposeTextbox(a, shell));
-  return candidates[0] ?? null;
+  const directlyEditableCandidates = candidates.filter(isDirectlyEditableElement);
+  const pool = directlyEditableCandidates.length > 0 ? directlyEditableCandidates : candidates;
+
+  pool.sort((a, b) => scoreLinkedInComposeTextbox(b, shell) - scoreLinkedInComposeTextbox(a, shell));
+  return pool[0] ?? null;
 }
 
 function findLinkedInSelectionTextboxInShell(shell: HTMLElement): HTMLElement | null {
@@ -236,12 +259,13 @@ function scoreLinkedInComposeTextbox(candidate: HTMLElement, shell: HTMLElement)
   const areaScore = Math.min(rect.width * rect.height, 500000) / 1000;
   const roleScore = role === "textbox" ? 100 : 0;
   const editableScore = candidate.isContentEditable ? 120 : 0;
+  const directEditableScore = isDirectlyEditableElement(candidate) ? 260 : -120;
   const directChildScore = candidate.parentElement === shell ? 20 : 0;
   const spellcheckScore = candidate.getAttribute("spellcheck") === "true" ? 10 : 0;
   const widthScore = Math.min(rect.width, shellRect.width) / 8;
   const heightScore = Math.min(rect.height, 320) / 6;
   const upperPaneScore = rect.top < shellRect.top + shellRect.height * 0.72 ? 40 : -20;
-  return signalScore + multilineScore + areaScore + roleScore + editableScore + directChildScore + spellcheckScore + widthScore + heightScore + upperPaneScore;
+  return signalScore + multilineScore + areaScore + roleScore + editableScore + directEditableScore + directChildScore + spellcheckScore + widthScore + heightScore + upperPaneScore;
 }
 
 function scheduleLinkedInComposeResolution(target: HTMLElement, shouldPrime = false): boolean {
