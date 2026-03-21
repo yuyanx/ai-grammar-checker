@@ -10,38 +10,53 @@ if [ ! -x "$ESBUILD" ]; then
   exit 1
 fi
 
-# Clean dist
-rm -rf dist
-mkdir -p dist/background dist/content dist/popup dist/options dist/icons
+TMP_DIST="$(mktemp -d ./dist.build.XXXXXX)"
+BACKUP_DIST="./dist.previous.$$"
+
+cleanup() {
+  rm -rf "$TMP_DIST"
+  rm -rf "$BACKUP_DIST"
+}
+
+trap cleanup EXIT
+
+mkdir -p "$TMP_DIST/background" "$TMP_DIST/content" "$TMP_DIST/popup" "$TMP_DIST/options" "$TMP_DIST/icons"
 
 # Bundle with esbuild (Chrome extensions need bundled files, not ES modules)
 "$ESBUILD" src/background/service-worker.ts \
-  --bundle --outfile=dist/background/service-worker.js \
+  --bundle --outfile="$TMP_DIST/background/service-worker.js" \
   --format=iife --target=es2020
 
 "$ESBUILD" src/content/index.ts \
-  --bundle --outfile=dist/content/index.js \
+  --bundle --outfile="$TMP_DIST/content/index.js" \
   --format=iife --target=es2020
 
 "$ESBUILD" src/content/page-script.ts \
-  --bundle --outfile=dist/content/page-script.js \
+  --bundle --outfile="$TMP_DIST/content/page-script.js" \
   --format=iife --target=es2020
 
 "$ESBUILD" src/popup/popup.ts \
-  --bundle --outfile=dist/popup/popup.js \
+  --bundle --outfile="$TMP_DIST/popup/popup.js" \
   --format=iife --target=es2020
 
 "$ESBUILD" src/options/options.ts \
-  --bundle --outfile=dist/options/options.js \
+  --bundle --outfile="$TMP_DIST/options/options.js" \
   --format=iife --target=es2020
 
 # Copy static assets
-cp manifest.json dist/
-cp src/content/content.css dist/content/
-cp src/popup/popup.html dist/popup/
-cp src/popup/popup.css dist/popup/
-cp src/options/options.html dist/options/
-cp src/options/options.css dist/options/
-cp src/icons/*.png dist/icons/
+cp manifest.json "$TMP_DIST/"
+cp src/content/content.css "$TMP_DIST/content/"
+cp src/popup/popup.html "$TMP_DIST/popup/"
+cp src/popup/popup.css "$TMP_DIST/popup/"
+cp src/options/options.html "$TMP_DIST/options/"
+cp src/options/options.css "$TMP_DIST/options/"
+cp src/icons/*.png "$TMP_DIST/icons/"
+
+if [ -d dist ]; then
+  mv dist "$BACKUP_DIST"
+fi
+mv "$TMP_DIST" dist
+TMP_DIST=""
+rm -rf "$BACKUP_DIST"
 
 echo "Build complete! Load dist/ as unpacked extension in Chrome."

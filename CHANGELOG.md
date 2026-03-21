@@ -1,5 +1,80 @@
 # Changelog
 
+## v1.12.28
+
+### Bug Fixes
+- Hide the widget when the actual focused input line scrolls out of the viewport, so ready/checking badges on GitHub and X composers no longer stay pinned on the page after the editor itself has scrolled away
+- Keep large multi-row composers on a stable expanded/side placement instead of forcing the compact outside-left fallback, so GitHub-style and X-style ask/compose surfaces stay attached to the editor instead of jumping to the far left edge
+
+## v1.12.27
+
+### Bug Fixes
+- Keep compact comment/chat badges on one stable reserved slot across ready/checking/error states, so Instagram and Grok row composers stop jumping between inside and outside positions or switching allocation when the status changes
+- Align compact row/bar badges vertically to the actual focused editable strip instead of the larger wrapper midpoint, so multi-row prompt bars like Grok image composers stay tied to the text row while still avoiding control clusters
+
+## v1.12.26
+
+### Bug Fixes
+- Add a selection-aware LinkedIn post-composer resolver and broaden LinkedIn compose-shell discovery, so the main share-post modal can attach after its real rich-text node appears instead of staying completely inactive
+- Make compact badge anchoring use the actual row geometry and fall back relative to that row, so narrow comment/chat composers keep the badge inline-right-safe instead of drifting to a larger wrapper or page edge
+
+## v1.12.25
+
+### Bug Fixes
+- Use the actual focused editable node for text/obstacle detection while anchoring compact badges to the visible composer row, so narrow LinkedIn and Grok editors no longer inherit far-left or control-overlapping badge placement from the wrong geometry source
+- Allow large LinkedIn compose dialogs to expand to a right-side modal anchor, so the main post composer can render a visible badge instead of disappearing when the inner textbox itself is too small to anchor
+
+## v1.12.24
+
+### Bug Fixes
+- Scan LinkedIn share-post wrapper nodes for compose intent and resolve them to the inner textbox, so the main post composer can activate even when LinkedIn exposes the placeholder shell before the editable node itself
+
+## v1.12.23
+
+### Bug Fixes
+- Resolve LinkedIn share-post wrapper focus targets down to their inner compose textbox, so the main post composer can activate even when focus lands on the placeholder shell instead of the editable node
+
+## v1.12.22
+
+### Bug Fixes
+- Anchor widget geometry to the real focused editable sub-element instead of always using the tracked outer editor root, so LinkedIn and Grok composers stop inheriting badge placement from the wrong visual box
+- Keep compact badge fallback placement close to the actual editor and stop expanding tiny editors to giant modal/page containers, so Grok no longer throws the blue dot far left and LinkedIn compact composers stay tied to the visible input row
+
+## v1.12.21
+
+### Bug Fixes
+- Prefer the innermost actual editable surface over outer wrapper roots when tracking rich composers, so LinkedIn and Grok stop pinning widgets to the wrong ancestor and can activate the real editor instead of a stale outer shell
+
+## v1.12.20
+
+### Bug Fixes
+- Let LinkedIn compose surfaces inherit compose intent from descendant and wrapper placeholders, so the main post composer no longer gets excluded when the visible "Share your thoughts" signal is not attached directly to the focused textbox node
+- Make compact badge anchoring prefer the nearest composer row with controls instead of the widest ancestor, so LinkedIn comment and Grok home badges stay tied to the actual editor row instead of drifting into overlapping or far-left positions
+
+## v1.12.19
+
+### Bug Fixes
+- Canonicalize nested editable fragments down to one tracked editor root, so rich composers such as LinkedIn and Grok no longer miss activation or leave duplicate stale widgets attached to different fragments of the same editor
+- Resolve textarea and input fixes against the nearest matching occurrence instead of the first repeated word, so follow-up `Fix All` passes on GitHub-style editors stop applying corrections to the wrong repeated token
+- Relax compact composer anchor selection so the blue badge can anchor to fuller control rows and stay clear of LinkedIn and Grok right-side action areas
+
+## v1.12.18
+
+### Bug Fixes
+- Build the extension into a temporary directory and swap it into `dist/` only after the bundle is complete, so Chrome no longer sees a half-built unpacked extension and reports a bogus manifest-read failure during reload
+
+## v1.12.17
+
+### Bug Fixes
+- Broaden LinkedIn compose-surface detection so the share-post dialog still activates when its placeholder lives in site-specific attributes or wrapper structures instead of the editable node itself
+- Prefer compact anchors that include same-row sibling controls and relax compact anchor sizing thresholds, so compact badges stay clear of LinkedIn comment actions and Grok's right-side composer controls
+
+## v1.12.16
+
+### Bug Fixes
+- Let supported site-specific compose surfaces such as LinkedIn's share-post editor override generic picker/search heuristics, so the main post composer is no longer accidentally excluded from grammar checking
+- Treat interactive controls embedded inside compact composer roots as widget obstacles, so compact blue badges no longer sit on top of LinkedIn comment action buttons or Grok's right-side composer controls
+
 ## v1.12.15
 
 ### Bug Fixes
