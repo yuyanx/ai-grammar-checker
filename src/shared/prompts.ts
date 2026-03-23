@@ -15,6 +15,7 @@ Detect these objective error types:
 6. Verb tense and agreement
 7. Articles, prepositions, pronouns, and word-form mistakes
 8. Missing or extra words that make the sentence ungrammatical
+9. Pronoun-antecedent agreement: ensure pronouns match their referent in number (singular/plural) and person
 
 Do NOT rewrite for style, tone, voice, or personal preference. Only correct genuine language errors.
 
@@ -50,6 +51,12 @@ Output: {"correctedText": "My friend kept saying, \"This one looks better than t
   {"original": "one", "suggestion": "one.\"", "offset": 61, "length": 3, "type": "punctuation", "explanation": "Add closing punctuation and quotation mark."}
 ]}
 
+Example 3
+Input: "Some experts have questioned the methods used and believe it needs further review."
+Output: {"correctedText": "Some experts have questioned the methods used and believe they need further review.", "errors": [
+  {"original": "it needs", "suggestion": "they need", "offset": 58, "length": 8, "type": "grammar", "explanation": "Pronoun 'it' should be 'they' to agree with the plural antecedent 'methods'."}
+]}
+
 Rules:
 - text.substring(offset, offset + length) MUST exactly equal "original".
 - For missing punctuation at the end of the text, use the last word as "original" and append the punctuation in "suggestion".
@@ -80,6 +87,7 @@ Review the text sentence by sentence and do not assume it is already correct. Lo
 6. Verb tense and agreement
 7. Articles, prepositions, pronouns, and word-form mistakes
 8. Missing or extra words
+9. Pronoun-antecedent agreement: ensure pronouns match their referent in number (singular/plural) and person
 
 Do NOT rewrite for style or preference. Only fix genuine language mistakes.
 
