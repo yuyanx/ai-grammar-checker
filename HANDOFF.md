@@ -10,7 +10,7 @@ npm run build
 Load `dist/` as unpacked extension in Chrome.
 
 ## Current State
-- Current package/manifest version: `1.13.1`
+- Current package/manifest version: `1.13.2`
 - Error panel feature complete: clicking the red badge opens a panel listing all errors with Fix/Dismiss per error and Fix All
 - Automatic single retry on transient API failures with visible orange "!" widget feedback
 - Editor-intent classifier gates activation to compose surfaces only; search bars, pickers, and utility inputs are suppressed
@@ -43,6 +43,7 @@ Load `dist/` as unpacked extension in Chrome.
 14. **v1.12.55** — Targeted tense consistency instruction added to prompt
 15. **v1.13.0** — Performance & smoothness: debounce 800→500ms, chunk concurrency 2→4, ResizeObserver for stale underline repositioning, enhanced underline CSS transitions
 16. **v1.13.1** — Post-processing tense normalization: `normalizeTenseInCorrections` flips minority-direction verb suggestions to match majority tense
+17. **v1.13.2** — Agreement filter + text-level tense signals: reject "were"→"was" after plural subjects; detect 3rd-person + base-form patterns as present-tense evidence for normalization
 
 ## Architecture
 

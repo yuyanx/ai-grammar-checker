@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.13.2
+
+### Bug Fixes
+- Add `filterBadAgreementCorrections`: reject AI suggestions that change correct subject-verb agreement to wrong agreement (e.g. "were"→"was" after plural subject "They")
+- Enhance `normalizeTenseInCorrections` to use text-level tense signals: patterns like "He go", "she feel" (3rd person subject + base-form verb) count as present-tense evidence, enabling normalization even when chunked checks return few corrections
+- Pass full original text to tense normalization so text-level signals work across all chunks
+
 ## v1.13.1
 
 ### Bug Fixes

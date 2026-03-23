@@ -13,7 +13,7 @@ import { OPENAI_API_URL, GEMINI_API_URL, DEFAULT_OPENAI_MODEL, MAX_TEXT_LENGTH, 
 import { findLocalPunctuationErrors, PUNCTUATION_RULES_VERSION } from "../shared/punctuation-rules.js";
 import { isLikelyEnglish } from "../shared/language-detect.js";
 
-import { findLocalGrammarErrors, isVerbProtectedByModal, normalizeTenseInCorrections } from "../shared/grammar-rules.js";
+import { findLocalGrammarErrors, isVerbProtectedByModal, normalizeTenseInCorrections, filterBadAgreementCorrections } from "../shared/grammar-rules.js";
 
 interface TextChunk {
   text: string;
@@ -243,7 +243,8 @@ async function handleCheckGrammar(
   errors = mergeLocalPunctuationErrors(errors, localPunctuationErrors);
   errors = filterModalProtectedErrors(errors, text);
   errors = mergeLocalGrammarErrors(errors, localGrammarErrors);
-  errors = normalizeTenseInCorrections(errors);
+  errors = filterBadAgreementCorrections(errors, text);
+  errors = normalizeTenseInCorrections(errors, text);
   console.log("[AI Grammar Checker] Validated errors:", errors.length, JSON.stringify(errors));
 
   // For chunked text, rebuild corrected text from the validated error list

@@ -283,22 +283,92 @@ function classifySuggestionTense(suggestion: string): { direction: "present" | "
 }
 
 /**
+ * Filter corrections that change correct subject-verb agreement to wrong agreement.
+ * E.g., reject "were" → "was" when preceded by plural subject "They/We/You".
+ */
+export function filterBadAgreementCorrections(errors: GrammarError[], text: string): GrammarError[] {
+  const PLURAL_SUBJECTS = new Set(["they", "we", "you"]);
+
+  return errors.filter((error) => {
+    const orig = error.original.toLowerCase();
+    const sugg = error.suggestion.toLowerCase();
+
+    // Reject "were" → "was" after plural subject
+    if (orig === "were" && sugg === "was") {
+      const before = text.slice(0, error.offset).trimEnd().toLowerCase();
+      const lastWord = before.match(/(\w+)$/)?.[1];
+      if (lastWord && PLURAL_SUBJECTS.has(lastWord)) {
+        console.log(
+          `[AI Grammar Checker] Filtering bad agreement: "${orig}" → "${sugg}" (plural subject "${lastWord}" requires "were")`
+        );
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
+// Base-form verbs used for text-level tense signal detection
+const BASE_FORM_VERBS = new Set([
+  "go", "play", "tell", "get", "feel", "start", "bring", "want", "learn",
+  "know", "come", "take", "make", "see", "give", "find", "think", "say",
+  "do", "have", "run", "read", "write", "try", "ask", "need", "help",
+  "stop", "look", "walk", "talk", "eat", "sit", "stand", "leave", "keep",
+  "meet", "sleep", "send", "open", "close", "work", "call", "move", "turn",
+  "put", "hit", "cut", "let", "hear", "break", "spend", "rise", "draw",
+  "lie", "explain", "live", "buy", "catch", "choose", "drive", "fall",
+  "grow", "hold", "lose", "pay", "show", "speak", "teach", "throw",
+  "understand", "win", "wear",
+]);
+
+/**
+ * Count tense signals from the original text.
+ * "3rd person subject + base form verb" = strong present-tense signal
+ * (the writer meant present tense but has an agreement error).
+ */
+function countTextTenseSignals(text: string): { present: number; past: number } {
+  let present = 0;
+  const past = 0;
+  const lower = text.toLowerCase();
+
+  // Match 3rd person singular subjects followed by a base-form verb
+  const pattern = /\b(he|she|it|the\s+\w+|his\s+\w+|her\s+\w+)\s+(\w+)\b/gi;
+  for (const match of lower.matchAll(pattern)) {
+    const verb = match[2];
+    if (BASE_FORM_VERBS.has(verb)) present++;
+  }
+
+  return { present, past };
+}
+
+/**
  * Normalize tense consistency across all corrections.
  * If corrections mix present and past verb forms, flip minority-direction
- * suggestions to match the majority. Drops corrections where the flipped
- * suggestion would equal the original (no-op after tense change).
+ * suggestions to match the majority. Also uses text-level tense signals
+ * (3rd person subject + base form = present intent) to determine tense
+ * direction when corrections alone are insufficient.
+ * Drops corrections where the flipped suggestion would equal the original.
  */
-export function normalizeTenseInCorrections(errors: GrammarError[]): GrammarError[] {
+export function normalizeTenseInCorrections(errors: GrammarError[], text: string): GrammarError[] {
   const classified = errors.map((error) => ({
     error,
     tense: classifySuggestionTense(error.suggestion),
   }));
 
-  const presentCount = classified.filter((c) => c.tense?.direction === "present").length;
-  const pastCount = classified.filter((c) => c.tense?.direction === "past").length;
+  let presentCount = classified.filter((c) => c.tense?.direction === "present").length;
+  let pastCount = classified.filter((c) => c.tense?.direction === "past").length;
 
-  // No inconsistency or too close to call
-  if (presentCount === 0 || pastCount === 0) return errors;
+  // Add text-level tense signals
+  const textSignals = countTextTenseSignals(text);
+  presentCount += textSignals.present;
+  pastCount += textSignals.past;
+
+  // Need at least one correction to normalize AND a clear direction
+  const correctionPresent = classified.filter((c) => c.tense?.direction === "present").length;
+  const correctionPast = classified.filter((c) => c.tense?.direction === "past").length;
+  if (correctionPresent + correctionPast === 0) return errors;
+  if (presentCount === pastCount) return errors;
   if (Math.abs(presentCount - pastCount) < 2) return errors;
 
   const majorityTense = presentCount > pastCount ? "present" : "past";

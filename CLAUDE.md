@@ -47,7 +47,7 @@ Important areas:
 - `src/shared/grammar-rules.ts`: deterministic local grammar detection (modal parallel structure, `isVerbProtectedByModal`, `filterModalProtectedErrors`)
 - `src/shared/language-detect.ts`: English-only language gating
 
-### Current State (v1.13.1)
+### Current State (v1.13.2)
 
 Implemented:
 
@@ -76,6 +76,8 @@ Implemented:
 - ResizeObserver on tracked editors repositions underlines when editor geometry changes (v1.13.0)
 - Enhanced underline CSS transitions with easing for smoother appearance (v1.13.0)
 - Post-processing tense normalization: when AI corrections mix present/past verb forms, `normalizeTenseInCorrections` flips minority-direction suggestions to match the majority using a verb form lookup table (v1.13.1)
+- `filterBadAgreementCorrections` rejects AI suggestions that break correct subject-verb agreement (e.g. "were"→"was" after "They") (v1.13.2)
+- Text-level tense signals: "3rd person subject + base form verb" patterns in the original text provide present-tense evidence for normalization even when chunks have few corrections (v1.13.2)
 
 Known issues still open:
 
