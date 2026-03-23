@@ -47,7 +47,7 @@ Important areas:
 - `src/shared/grammar-rules.ts`: deterministic local grammar detection (modal parallel structure, `isVerbProtectedByModal`, `filterModalProtectedErrors`)
 - `src/shared/language-detect.ts`: English-only language gating
 
-### Current State (v1.12.50)
+### Current State (v1.12.51)
 
 Implemented:
 
@@ -65,10 +65,9 @@ Implemented:
 - Coordinated phrase protection, quote boundary validation, reverse fix suppression
 - Deterministic modal parallel structure detection: catches conjugated verbs after modals (v1.12.41) and filters oscillating AI suggestions via `filterModalProtectedErrors` (v1.12.43)
 - `isVerbProtectedByModal` now protects coordinated verbs even when the modal-adjacent verb is conjugated (v1.12.45)
-- Grammar prompt includes tense consistency examples for past-tense (v1.12.46) and present-tense narratives (v1.12.47), plus dominant-tense rule
-- Grammar prompt includes quantifier-noun number agreement detection (v1.12.48)
 - Fix All for contenteditable uses stepwise inline fallback per fix with verification (v1.12.49)
-- Increased chunk size limits (6 sentences/100 words/600 chars trigger, 5 sentences/500 chars per chunk) to preserve cross-sentence context for tense consistency and quotation handling (v1.12.50)
+- Reverted prompt to v1.12.36 baseline: removed tense consistency examples, number agreement rule, and dominant-tense instruction that degraded detection on chunked long text (v1.12.51)
+- Reverted chunk size increase from v1.12.50 — small chunks (3 sentences/260 chars) produce better error detection (v1.12.51)
 
 Known issues still open:
 

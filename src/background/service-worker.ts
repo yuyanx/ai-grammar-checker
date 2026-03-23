@@ -385,7 +385,7 @@ async function checkTextInChunks(
 function shouldChunkText(text: string): boolean {
   const sentenceCount = countSentences(text);
   const wordCount = (text.match(/\b[\w']+\b/g) || []).length;
-  return sentenceCount > 6 || wordCount > 100 || text.length > 600;
+  return sentenceCount > 3 || wordCount > 45 || text.length > 260;
 }
 
 function countSentences(text: string): number {
@@ -408,8 +408,8 @@ function splitTextIntoChunks(text: string): TextChunk[] {
     const sentenceCount = i - chunkStartIndex + 1;
     const candidateText = text.slice(currentStart, candidateEnd);
     const shouldBreak =
-      sentenceCount > 5 ||
-      candidateText.length > 500;
+      sentenceCount > 3 ||
+      candidateText.length > 260;
 
     if (shouldBreak) {
       chunks.push({
