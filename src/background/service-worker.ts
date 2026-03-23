@@ -13,7 +13,7 @@ import { OPENAI_API_URL, GEMINI_API_URL, DEFAULT_OPENAI_MODEL, MAX_TEXT_LENGTH, 
 import { findLocalPunctuationErrors, PUNCTUATION_RULES_VERSION } from "../shared/punctuation-rules.js";
 import { isLikelyEnglish } from "../shared/language-detect.js";
 import { detectDominantTense } from "../shared/tense-detect.js";
-import { findLocalGrammarErrors } from "../shared/grammar-rules.js";
+import { findLocalGrammarErrors, isVerbProtectedByModal } from "../shared/grammar-rules.js";
 
 interface TextChunk {
   text: string;
@@ -203,7 +203,6 @@ async function handleCheckGrammar(
 
   const localPunctuationErrors = settings.checkPunctuation ? findLocalPunctuationErrors(text) : [];
   const localGrammarErrors = settings.checkGrammar ? findLocalGrammarErrors(text) : [];
-  console.log("[AI Grammar Checker] Local grammar errors:", localGrammarErrors.length, JSON.stringify(localGrammarErrors));
   const cacheKey = buildCacheKey(text, settings);
 
   // Check cache first
@@ -240,9 +239,9 @@ async function handleCheckGrammar(
 
   errors = filterDerivedErrorsForLocalPunctuation(errors, localPunctuationErrors);
   errors = mergeLocalPunctuationErrors(errors, localPunctuationErrors);
-  console.log("[AI Grammar Checker] Before grammar merge:", errors.length, "API errors");
+  errors = filterModalProtectedErrors(errors, text);
   errors = mergeLocalGrammarErrors(errors, localGrammarErrors);
-  console.log("[AI Grammar Checker] After grammar merge:", errors.length, "total errors", JSON.stringify(errors));
+  console.log("[AI Grammar Checker] Validated errors:", errors.length, JSON.stringify(errors));
 
   // Cache the unfiltered result
   setCache(cacheKey, errors, parsed.correctedText);
@@ -277,24 +276,13 @@ async function checkSingleText(
     signal
   );
 
-  console.log("[AI Grammar Checker] Raw errors from API:", JSON.stringify(parsed.errors));
-
   let errors = validateErrors(parsed.errors, text);
   if (!hasQuoteHeavyLocalPunctuation && parsed.correctedText && parsed.correctedText !== text) {
     const derivedErrors = deriveErrorsFromCorrectedText(text, parsed.correctedText);
     if (errors.length === 0) {
       errors = derivedErrors;
-      console.log("[AI Grammar Checker] Derived errors from correctedText:", errors.length, JSON.stringify(errors));
     } else {
-      const supplementalErrors = mergeSupplementalDerivedErrors(errors, derivedErrors, localPunctuationErrors);
-      if (supplementalErrors.length !== errors.length) {
-        console.log(
-          "[AI Grammar Checker] Added supplemental derived errors:",
-          supplementalErrors.length - errors.length,
-          JSON.stringify(supplementalErrors.filter((error) => isDerivedError(error)))
-        );
-      }
-      errors = supplementalErrors;
+      errors = mergeSupplementalDerivedErrors(errors, derivedErrors, localPunctuationErrors);
     }
   }
 
@@ -617,6 +605,22 @@ function mergeLocalGrammarErrors(
   }
 
   return merged.sort((a, b) => a.offset - b.offset);
+}
+
+function filterModalProtectedErrors(
+  errors: GrammarError[],
+  text: string
+): GrammarError[] {
+  return errors.filter((error) => {
+    if (!isVerbProtectedByModal(text, error.offset)) return true;
+    // The word at this offset is in a modal context — reject suggestions
+    // that try to conjugate it (add -s, -es, -ed)
+    const suggestion = error.suggestion.toLowerCase();
+    const original = error.original.toLowerCase();
+    if (suggestion.endsWith("ed") && !original.endsWith("ed")) return false;
+    if (suggestion.endsWith("s") && !suggestion.endsWith("ss") && !original.endsWith("s")) return false;
+    return true;
+  });
 }
 
 function filterDerivedErrorsForLocalPunctuation(

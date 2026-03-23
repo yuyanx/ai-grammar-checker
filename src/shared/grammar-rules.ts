@@ -24,23 +24,73 @@ export function findLocalGrammarErrors(text: string): GrammarError[] {
   const errors: GrammarError[] = [];
   const seen = new Set<string>();
 
-  // Split into sentences to avoid cross-sentence false positives
   const sentences = text.split(/(?<=[.!?;])\s+/);
   let sentenceOffset = 0;
-
-  console.log("[Grammar Rules] findLocalGrammarErrors called, text length:", text.length, "sentences:", sentences.length);
 
   for (const sentence of sentences) {
     findModalParallelErrors(sentence, sentenceOffset, errors, seen);
     sentenceOffset += sentence.length;
-    // Advance past the whitespace that split created
     while (sentenceOffset < text.length && /\s/.test(text[sentenceOffset])) {
       sentenceOffset++;
     }
   }
 
-  console.log("[Grammar Rules] Found", errors.length, "local grammar errors:", JSON.stringify(errors));
   return errors;
+}
+
+/**
+ * Check if a word at the given offset is in a modal verb phrase context
+ * (directly after a modal, or coordinated via "and" with a modal verb).
+ * Such words must be base form and should not be changed to conjugated forms.
+ */
+export function isVerbProtectedByModal(text: string, offset: number): boolean {
+  // Find the sentence containing this offset
+  const sentences = text.split(/(?<=[.!?;])\s+/);
+  let sentenceOffset = 0;
+  let sentence = "";
+
+  for (const s of sentences) {
+    if (offset >= sentenceOffset && offset < sentenceOffset + s.length) {
+      sentence = s;
+      break;
+    }
+    sentenceOffset += s.length;
+    while (sentenceOffset < text.length && /\s/.test(text[sentenceOffset])) {
+      sentenceOffset++;
+    }
+  }
+
+  if (!sentence) return false;
+
+  const localOffset = offset - sentenceOffset;
+  const lower = sentence.toLowerCase();
+
+  for (const modal of MODALS) {
+    const modalPattern = new RegExp(`\\b${modal}\\s+(\\w+)`, "gi");
+
+    for (const modalMatch of lower.matchAll(modalPattern)) {
+      const modalEnd = (modalMatch.index ?? 0) + modalMatch[0].length;
+      const verbAfterModal = modalMatch[1];
+
+      // Skip if the verb right after modal is conjugated (different error type)
+      if (isConjugatedVerb(verbAfterModal)) continue;
+
+      // Check if the target offset is the verb directly after the modal
+      const verbStart = (modalMatch.index ?? 0) + modal.length + (modalMatch[0].length - modal.length - verbAfterModal.length);
+      if (localOffset === verbStart) return true;
+
+      // Check if the target offset is after "and" coordinated with this modal phrase
+      const rest = lower.slice(modalEnd);
+      const andPattern = /\band\s+(\w+)\b/gi;
+
+      for (const andMatch of rest.matchAll(andPattern)) {
+        const wordStart = modalEnd + (andMatch.index ?? 0) + andMatch[0].indexOf(andMatch[1]);
+        if (localOffset === wordStart) return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function findModalParallelErrors(
