@@ -16,6 +16,7 @@ Detect these objective error types:
 7. Articles, prepositions, pronouns, and word-form mistakes
 8. Missing or extra words that make the sentence ungrammatical
 9. Pronoun-antecedent agreement: ensure pronouns match their referent in number (singular/plural) and person
+10. Parallel structure: when verbs share a modal or auxiliary (e.g. "might"), all verbs must use the same base form
 
 Do NOT rewrite for style, tone, voice, or personal preference. Only correct genuine language errors.
 
@@ -57,6 +58,12 @@ Output: {"correctedText": "Some experts have questioned the methods used and bel
   {"original": "it needs", "suggestion": "they need", "offset": 58, "length": 8, "type": "grammar", "explanation": "Pronoun 'it' should be 'they' to agree with the plural antecedent 'methods'."}
 ]}
 
+Example 4
+Input: "Some analysts have suggested that the issue might relate to a recent update and needs further investigation."
+Output: {"correctedText": "Some analysts have suggested that the issue might relate to a recent update and need further investigation.", "errors": [
+  {"original": "needs", "suggestion": "need", "offset": 80, "length": 5, "type": "grammar", "explanation": "Use base form 'need' to match the modal 'might' shared across the parallel verbs 'might relate... and need'."}
+]}
+
 Rules:
 - text.substring(offset, offset + length) MUST exactly equal "original".
 - For missing punctuation at the end of the text, use the last word as "original" and append the punctuation in "suggestion".
@@ -88,6 +95,7 @@ Review the text sentence by sentence and do not assume it is already correct. Lo
 7. Articles, prepositions, pronouns, and word-form mistakes
 8. Missing or extra words
 9. Pronoun-antecedent agreement: ensure pronouns match their referent in number (singular/plural) and person
+10. Parallel structure: when verbs share a modal or auxiliary (e.g. "might"), all verbs must use the same base form
 
 Do NOT rewrite for style or preference. Only fix genuine language mistakes.
 

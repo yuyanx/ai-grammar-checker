@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.12.35
+
+### Improvements
+- Add parallel structure rule (#10) and a few-shot example to both grammar check and recheck prompts, so the model catches errors like "might relate... and needs" → "might relate... and need"
+- Bump prompt cache version to invalidate stale cached responses
+
 ## v1.12.34
 
 ### Bug Fixes
