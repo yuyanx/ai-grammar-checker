@@ -1,4 +1,4 @@
-export function buildGrammarCheckPrompt(text: string, tenseHint?: "past" | "present" | null): {
+export function buildGrammarCheckPrompt(text: string, tenseHint?: "past" | "present" | null, hasModalParallelism?: boolean): {
   system: string;
   user: string;
 } {
@@ -63,6 +63,9 @@ Rules:
   let user = `Find ALL objective errors in this text. Check every sentence carefully for spelling, punctuation, capitalization, grammar, word choice, tense, agreement, articles, prepositions, pronouns, and missing words.\n\n${text}`;
   if (tenseHint) {
     user += `\n\nNote: This text is predominantly written in ${tenseHint} tense. Flag any verbs that inconsistently break this tense.`;
+  }
+  if (hasModalParallelism) {
+    user += `\n\nNote: This text contains modal verbs with coordinated clauses. Ensure all verbs sharing a modal (e.g., "might X and Y") use the base form.`;
   }
 
   return { system, user };

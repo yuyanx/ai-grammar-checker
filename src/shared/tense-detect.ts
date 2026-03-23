@@ -25,6 +25,10 @@ const ED_FALSE_POSITIVES = new Set([
   "experienced", "complicated", "dedicated", "automated",
 ]);
 
+export function detectModalParallelism(text: string): boolean {
+  return /\b(?:might|could|would|should|can|may|will|shall|must)\b.{1,80}\band\b/i.test(text);
+}
+
 export function detectDominantTense(text: string): "past" | "present" | null {
   const words = text.toLowerCase().match(/\b[a-z']+\b/g);
   if (!words || words.length < 10) return null;
