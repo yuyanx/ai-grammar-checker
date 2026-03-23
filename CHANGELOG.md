@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.12.32
+
+### Improvements
+- Add explicit pronoun-antecedent agreement rule (#9) and a few-shot example to both grammar check and recheck prompts, so the model is guided to catch errors like "the methods... it needs" → "they need"
+- Bump prompt cache version to invalidate stale cached responses
+
 ## v1.12.31
 
 ### Bug Fixes
