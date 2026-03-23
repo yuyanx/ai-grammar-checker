@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.13.0
+
+### Performance
+- Reduce default debounce delay from 800ms to 500ms so grammar checks start sooner after typing stops
+- Increase chunk concurrency from 2 to 4 for faster parallel checking of long drafts
+
+### Improvements
+- Add `ResizeObserver` to tracked editors so underlines automatically reposition when editor geometry changes (e.g., pressing Enter, resizing textareas)
+- Enhance underline CSS transitions with `ease-in`/`ease-out` easing and `transform` for smoother appearance
+
 ## v1.12.55
 
 ### Improvements

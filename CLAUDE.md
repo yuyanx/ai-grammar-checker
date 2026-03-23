@@ -47,14 +47,14 @@ Important areas:
 - `src/shared/grammar-rules.ts`: deterministic local grammar detection (modal parallel structure, `isVerbProtectedByModal`, `filterModalProtectedErrors`)
 - `src/shared/language-detect.ts`: English-only language gating
 
-### Current State (v1.12.55)
+### Current State (v1.13.0)
 
 Implemented:
 
 - Deterministic local punctuation rules for obvious malformed patterns (v1.9.0)
 - English-only language gating in content script and service worker (v1.9.0)
 - Stable long-draft checking lifecycle with stale-response suppression (v1.10.0)
-- Parallel chunk checks with concurrency cap of 2 (v1.11.0)
+- Parallel chunk checks with concurrency cap of 4 (v1.11.0, raised in v1.13.0)
 - Per-chunk caching with punctuation-rule cache versioning (v1.11.0)
 - Editor-intent classifier limiting activation to compose surfaces only (v1.12.0)
 - Scroll-locked badge positioning without animation lag (v1.12.1)
@@ -72,6 +72,9 @@ Implemented:
 - Chunks now include surrounding sentence context in the prompt, helping the AI understand boundary text and catch cross-sentence agreement errors like "was"→"were" (v1.12.53)
 - Deterministic compound subject agreement rule: "X and Y, which was" → "were" catches cases the AI misses (v1.12.54)
 - Added targeted tense consistency instruction to prompt: when correcting verb forms, keep all corrections in the same tense (v1.12.55)
+- Default debounce reduced from 800ms to 500ms, chunk concurrency raised from 2 to 4 for faster checking (v1.13.0)
+- ResizeObserver on tracked editors repositions underlines when editor geometry changes (v1.13.0)
+- Enhanced underline CSS transitions with easing for smoother appearance (v1.13.0)
 
 Known issues still open:
 
@@ -107,12 +110,19 @@ Do not optimize speed first if the correction pipeline is still non-convergent o
 
 #### Phase 3: Performance (completed v1.11.0)
 
-7. ~~Parallelize chunk checks with capped concurrency~~ — concurrency cap of 2
+7. ~~Parallelize chunk checks with capped concurrency~~ — concurrency cap of 2, raised to 4 in v1.13.0
 8. ~~Add per-chunk caching~~ — 5-minute TTL with punctuation-rule versioning
 
 #### Phase 4: Activation (completed v1.12.0)
 
 9. ~~Editor-intent classifier~~ — `src/content/editor-classifier.ts`, limits activation to compose surfaces only
+
+#### Phase 5: Speed & Smoothness (completed v1.13.0)
+
+10. ~~Reduce default debounce~~ — 800ms → 500ms
+11. ~~Increase chunk concurrency~~ — 2 → 4
+12. ~~Add ResizeObserver for stale underline repositioning~~
+13. ~~Enhance underline CSS transitions~~
 
 ### Deferred Backlog
 

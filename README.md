@@ -89,7 +89,7 @@ Uses esbuild to bundle TypeScript into the `dist/` directory. The build copies s
 ## How It Works
 
 1. The content script classifies editable fields and monitors only real writing surfaces (email composers, chat boxes, comment editors)
-2. After you stop typing (configurable debounce, default 800ms), text is sent to the service worker
+2. After you stop typing (configurable debounce, default 500ms), text is sent to the service worker
 3. The service worker checks its cache, then calls the selected API
 4. Errors are returned with exact positions, validated against the original text
 5. Underlines are rendered in a shadow DOM overlay, and clicking one shows a suggestion popover

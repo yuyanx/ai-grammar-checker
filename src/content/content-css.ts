@@ -47,7 +47,7 @@ export const CONTENT_CSS = `
     background-position: bottom;
     z-index: 2147483645;
     animation: grammar-underline-in 0.3s ease-out;
-    transition: opacity 0.2s, height 0.15s;
+    transition: opacity 0.2s ease-in, height 0.15s, transform 0.2s ease-out;
   }
 
   .grammar-underline:hover {

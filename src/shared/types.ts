@@ -62,4 +62,5 @@ export interface ElementState {
   renderGeneration: number;
   sourceId: string;
   observers: MutationObserver[];
+  resizeObserver?: ResizeObserver;
 }

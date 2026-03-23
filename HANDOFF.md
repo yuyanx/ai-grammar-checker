@@ -10,14 +10,14 @@ npm run build
 Load `dist/` as unpacked extension in Chrome.
 
 ## Current State
-- Current package/manifest version: `1.12.55`
+- Current package/manifest version: `1.13.0`
 - Error panel feature complete: clicking the red badge opens a panel listing all errors with Fix/Dismiss per error and Fix All
 - Automatic single retry on transient API failures with visible orange "!" widget feedback
 - Editor-intent classifier gates activation to compose surfaces only; search bars, pickers, and utility inputs are suppressed
 - Deterministic local punctuation rules catch obvious malformed patterns without an API call
 - Deterministic modal parallel structure detection catches conjugated verbs after modals and coordinated base-form violations
 - English-only gating suppresses non-English text before provider requests
-- Parallel chunk checks (concurrency=2) with per-chunk caching (5-minute TTL)
+- Parallel chunk checks (concurrency=4) with per-chunk caching (5-minute TTL)
 - Stable compact/full badge placement across Gmail, LinkedIn, Grok, X, Instagram, GitHub, ChatGPT composers
 - Scroll-locked badge positioning without animation lag
 - Prompt includes targeted tense consistency instruction for verb corrections
@@ -36,6 +36,7 @@ Load `dist/` as unpacked extension in Chrome.
 7. **v1.12.41–v1.12.43** — Deterministic modal parallel structure detection in `grammar-rules.ts`; `filterModalProtectedErrors` prevents AI from oscillating base-form verbs after modals
 8. **v1.12.45–v1.12.48** — Grammar prompt improvements: tense consistency examples (past + present), quantifier-noun agreement rule, corrected modal protection for conjugated-verb context
 9. **v1.12.49** — Fix All contenteditable refactored: inline stepwise fallback per fix, always uses surfaced errors not canonical diff
+10. **v1.13.0** — Performance & smoothness: debounce 800→500ms, chunk concurrency 2→4, ResizeObserver for stale underline repositioning, enhanced underline CSS transitions
 10. **v1.12.50–v1.12.51** — Chunk size experiment (increased then reverted); prompt reverted to v1.12.36 baseline removing tense/agreement rules that hurt chunked detection
 11. **v1.12.52** — Chunked corrected text rebuilt from validated error list instead of concatenating chunk outputs
 12. **v1.12.53** — Surrounding sentence context added to chunk prompts for cross-sentence error detection

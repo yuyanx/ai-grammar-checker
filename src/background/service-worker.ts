@@ -79,7 +79,7 @@ const CACHE_MAX = 50;
 const chunkResponseCache = new Map<string, { parsed: ParsedResponse; errors: GrammarError[]; timestamp: number }>();
 const CHUNK_CACHE_TTL = 5 * 60_000; // 5 minutes
 const CHUNK_CACHE_MAX = 100;
-const CHUNK_CONCURRENCY = 2;
+const CHUNK_CONCURRENCY = 4;
 
 function getCached(cacheKey: string): { errors: GrammarError[]; correctedText?: string } | null {
   const entry = responseCache.get(cacheKey);

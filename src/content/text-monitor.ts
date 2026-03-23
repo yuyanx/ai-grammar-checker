@@ -12,7 +12,7 @@ const elementStates = new WeakMap<HTMLElement, ElementState>();
 const trackedElements = new Set<HTMLElement>();
 const elementSourceIds = new WeakMap<HTMLElement, string>();
 const loggedClassifications = new WeakMap<HTMLElement, string>();
-let debounceMs = 800;
+let debounceMs = 500;
 let enabled = true;
 let configuredCache: boolean | null = null;
 let lastUrl = location.href;
@@ -843,6 +843,17 @@ function attachListeners(element: HTMLElement): void {
     observer.observe(element, { childList: true, subtree: true, characterData: true });
     state.observers.push(observer);
   }
+
+  // Attach ResizeObserver to re-render underlines when the editor's
+  // physical dimensions change (e.g., pressing Enter, expanding textarea).
+  const resizeObserver = new ResizeObserver(() => {
+    const currentState = elementStates.get(element);
+    if (!currentState || currentState.errors.length === 0) return;
+    reRenderAll();
+    refreshWidget(element);
+  });
+  resizeObserver.observe(element);
+  state.resizeObserver = resizeObserver;
 }
 
 async function prewarmBackground(): Promise<void> {
@@ -1195,6 +1206,11 @@ function cleanupElementState(element: HTMLElement): void {
     observer.disconnect();
   }
   state.observers = [];
+
+  if (state.resizeObserver) {
+    state.resizeObserver.disconnect();
+    state.resizeObserver = undefined;
+  }
 }
 
 function clearPendingCheck(state: ElementState): void {
