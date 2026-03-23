@@ -293,26 +293,40 @@ async function checkSingleText(
 
   if (localPunctuationErrors.length === 0 && shouldRunHighRecallFallback(text, errors, parsed.correctedText)) {
     console.log("[AI Grammar Checker] Running high-recall recheck fallback");
-    const fallbackPrompt = buildGrammarRecheckPrompt(text);
+    const recheckText = (errors.length > 0 && parsed.correctedText && parsed.correctedText !== text)
+      ? parsed.correctedText
+      : text;
+    const fallbackPrompt = buildGrammarRecheckPrompt(recheckText);
     const fallbackParsed = await callConfiguredProvider(
       settings,
       fallbackPrompt.system,
       fallbackPrompt.user,
       signal
     );
-    let fallbackErrors = validateErrors(fallbackParsed.errors, text);
+    let fallbackErrors = validateErrors(fallbackParsed.errors, recheckText);
     if (
       !hasQuoteHeavyLocalPunctuation &&
       fallbackErrors.length === 0 &&
       fallbackParsed.correctedText &&
-      fallbackParsed.correctedText !== text
+      fallbackParsed.correctedText !== recheckText
     ) {
-      fallbackErrors = deriveErrorsFromCorrectedText(text, fallbackParsed.correctedText);
+      fallbackErrors = deriveErrorsFromCorrectedText(recheckText, fallbackParsed.correctedText);
       console.log("[AI Grammar Checker] Derived fallback errors from correctedText:", fallbackErrors.length, JSON.stringify(fallbackErrors));
     }
+    // If rechecking correctedText, map errors back to original text offsets
+    if (recheckText !== text && fallbackErrors.length > 0) {
+      fallbackErrors = mapErrorsToOriginalText(fallbackErrors, text);
+      fallbackErrors = fallbackErrors.filter((e) => e.offset >= 0);
+      console.log("[AI Grammar Checker] Mapped recheck errors to original text:", fallbackErrors.length, JSON.stringify(fallbackErrors));
+    }
     if (fallbackErrors.length > 0) {
-      parsed = fallbackParsed;
-      errors = fallbackErrors;
+      // Merge with first-pass errors, deduplicating by offset
+      const existingOffsets = new Set(errors.map((e) => `${e.offset}:${e.length}`));
+      const newErrors = fallbackErrors.filter((e) => !existingOffsets.has(`${e.offset}:${e.length}`));
+      if (newErrors.length > 0) {
+        console.log("[AI Grammar Checker] Second pass found additional errors:", newErrors.length);
+        errors = [...errors, ...newErrors];
+      }
     }
   }
 
@@ -489,12 +503,24 @@ function shouldRunHighRecallFallback(
   errors: GrammarError[],
   correctedText?: string
 ): boolean {
-  if (errors.length > 0) return false;
-  if (correctedText && correctedText !== text) return false;
-
   const wordCount = (text.match(/\b[\w']+\b/g) || []).length;
   const sentenceCount = (text.match(/[.!?](?:\s|$)/g) || []).length;
+  // Always run on longer text: if first pass found errors, recheck the correctedText;
+  // if first pass found nothing, recheck the original text.
+  if (errors.length === 0 && correctedText && correctedText !== text) return false;
   return text.length >= 120 && wordCount >= 20 && sentenceCount >= 2;
+}
+
+/**
+ * Map errors found in correctedText back to the original text by
+ * searching for each error's "original" substring in the original text.
+ */
+function mapErrorsToOriginalText(errors: GrammarError[], originalText: string): GrammarError[] {
+  return errors.map((error) => {
+    const idx = originalText.indexOf(error.original);
+    if (idx < 0) return { ...error, offset: -1 };
+    return { ...error, offset: idx };
+  });
 }
 
 async function handlePrewarm(_request: PrewarmRequest): Promise<PrewarmResponse> {

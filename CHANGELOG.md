@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.14.0
+
+### Features
+- Run a second-pass recheck on the correctedText when the first pass found errors, so subtle grammar issues (pronoun-antecedent agreement, parallel structure) that get missed when the model is distracted by obvious errors can be caught in a cleaner second pass
+- Merge second-pass errors with first-pass errors, deduplicating by offset
+
 ## v1.13.5
 
 ### Bug Fixes
