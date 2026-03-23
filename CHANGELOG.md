@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.12.34
+
+### Bug Fixes
+- Remove "Runtime invalidated" and "Recovering desynced checking widget" log messages entirely so Chrome's extensions error page no longer fills with yellow warnings after reloading the extension
+
 ## v1.12.33
 
 ### Bug Fixes
