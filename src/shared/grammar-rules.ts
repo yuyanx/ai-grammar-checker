@@ -186,6 +186,165 @@ function findCompoundSubjectWasErrors(
   }
 }
 
+// ── Tense normalization ──────────────────────────────────────────────
+// When the AI's corrections mix present and past tense (common in chunked
+// checks), normalize minority-direction verb suggestions to match the majority.
+
+const TENSE_PAIRS: Array<{ present: string; past: string }> = [
+  { present: "goes", past: "went" },
+  { present: "plays", past: "played" },
+  { present: "tells", past: "told" },
+  { present: "gets", past: "got" },
+  { present: "feels", past: "felt" },
+  { present: "starts", past: "started" },
+  { present: "brings", past: "brought" },
+  { present: "wants", past: "wanted" },
+  { present: "learns", past: "learned" },
+  { present: "knows", past: "knew" },
+  { present: "comes", past: "came" },
+  { present: "takes", past: "took" },
+  { present: "makes", past: "made" },
+  { present: "sees", past: "saw" },
+  { present: "gives", past: "gave" },
+  { present: "finds", past: "found" },
+  { present: "thinks", past: "thought" },
+  { present: "says", past: "said" },
+  { present: "does", past: "did" },
+  { present: "has", past: "had" },
+  { present: "runs", past: "ran" },
+  { present: "reads", past: "read" },
+  { present: "writes", past: "wrote" },
+  { present: "tries", past: "tried" },
+  { present: "asks", past: "asked" },
+  { present: "needs", past: "needed" },
+  { present: "helps", past: "helped" },
+  { present: "stops", past: "stopped" },
+  { present: "looks", past: "looked" },
+  { present: "walks", past: "walked" },
+  { present: "talks", past: "talked" },
+  { present: "eats", past: "ate" },
+  { present: "sits", past: "sat" },
+  { present: "stands", past: "stood" },
+  { present: "leaves", past: "left" },
+  { present: "keeps", past: "kept" },
+  { present: "meets", past: "met" },
+  { present: "sleeps", past: "slept" },
+  { present: "sends", past: "sent" },
+  { present: "builds", past: "built" },
+  { present: "buys", past: "bought" },
+  { present: "catches", past: "caught" },
+  { present: "chooses", past: "chose" },
+  { present: "drives", past: "drove" },
+  { present: "falls", past: "fell" },
+  { present: "grows", past: "grew" },
+  { present: "holds", past: "held" },
+  { present: "loses", past: "lost" },
+  { present: "pays", past: "paid" },
+  { present: "shows", past: "showed" },
+  { present: "speaks", past: "spoke" },
+  { present: "teaches", past: "taught" },
+  { present: "throws", past: "threw" },
+  { present: "understands", past: "understood" },
+  { present: "wins", past: "won" },
+  { present: "wears", past: "wore" },
+  { present: "explains", past: "explained" },
+  { present: "lives", past: "lived" },
+  { present: "opens", past: "opened" },
+  { present: "closes", past: "closed" },
+  { present: "works", past: "worked" },
+  { present: "calls", past: "called" },
+  { present: "moves", past: "moved" },
+  { present: "turns", past: "turned" },
+  { present: "puts", past: "put" },
+  { present: "hits", past: "hit" },
+  { present: "cuts", past: "cut" },
+  { present: "lets", past: "let" },
+  { present: "hears", past: "heard" },
+  { present: "breaks", past: "broke" },
+  { present: "spends", past: "spent" },
+  { present: "rises", past: "rose" },
+  { present: "draws", past: "drew" },
+  { present: "lies", past: "lay" },
+  // Contractions
+  { present: "doesn't", past: "didn't" },
+];
+
+// Build fast lookup maps
+const presentToInfo = new Map<string, { direction: "present"; flipped: string }>();
+const pastToInfo = new Map<string, { direction: "past"; flipped: string }>();
+for (const pair of TENSE_PAIRS) {
+  presentToInfo.set(pair.present, { direction: "present", flipped: pair.past });
+  pastToInfo.set(pair.past, { direction: "past", flipped: pair.present });
+}
+
+function classifySuggestionTense(suggestion: string): { direction: "present" | "past"; flipped: string } | null {
+  const lower = suggestion.toLowerCase();
+  return presentToInfo.get(lower) ?? pastToInfo.get(lower) ?? null;
+}
+
+/**
+ * Normalize tense consistency across all corrections.
+ * If corrections mix present and past verb forms, flip minority-direction
+ * suggestions to match the majority. Drops corrections where the flipped
+ * suggestion would equal the original (no-op after tense change).
+ */
+export function normalizeTenseInCorrections(errors: GrammarError[]): GrammarError[] {
+  const classified = errors.map((error) => ({
+    error,
+    tense: classifySuggestionTense(error.suggestion),
+  }));
+
+  const presentCount = classified.filter((c) => c.tense?.direction === "present").length;
+  const pastCount = classified.filter((c) => c.tense?.direction === "past").length;
+
+  // No inconsistency or too close to call
+  if (presentCount === 0 || pastCount === 0) return errors;
+  if (Math.abs(presentCount - pastCount) < 2) return errors;
+
+  const majorityTense = presentCount > pastCount ? "present" : "past";
+  console.log(
+    `[AI Grammar Checker] Tense normalization: ${presentCount} present, ${pastCount} past → normalizing to ${majorityTense}`
+  );
+
+  const result: GrammarError[] = [];
+  for (const { error, tense } of classified) {
+    if (!tense || tense.direction === majorityTense) {
+      result.push(error);
+      continue;
+    }
+
+    // Flip suggestion to majority tense
+    const flipped = matchTenseCase(tense.flipped, error.suggestion);
+
+    // If flipping makes suggestion equal original, this error doesn't exist in the majority tense
+    if (flipped.toLowerCase() === error.original.toLowerCase()) {
+      console.log(
+        `[AI Grammar Checker] Tense normalization: dropping "${error.original}" → "${error.suggestion}" (would be no-op in ${majorityTense} tense)`
+      );
+      continue;
+    }
+
+    result.push({
+      ...error,
+      suggestion: flipped,
+      explanation: `${error.explanation} (adjusted to ${majorityTense} tense for consistency)`,
+    });
+  }
+
+  return result;
+}
+
+function matchTenseCase(target: string, reference: string): string {
+  if (
+    reference.length > 0 &&
+    reference[0] === reference[0].toUpperCase() &&
+    reference[0] !== reference[0].toLowerCase()
+  ) {
+    return target[0].toUpperCase() + target.slice(1);
+  }
+  return target;
+}
+
 function isConjugatedVerb(word: string): boolean {
   // Third person -s (needs, wants, goes)
   if (word.endsWith("s") && !word.endsWith("ss") && word.length >= 4) {

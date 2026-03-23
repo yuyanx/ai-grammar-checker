@@ -47,7 +47,7 @@ Important areas:
 - `src/shared/grammar-rules.ts`: deterministic local grammar detection (modal parallel structure, `isVerbProtectedByModal`, `filterModalProtectedErrors`)
 - `src/shared/language-detect.ts`: English-only language gating
 
-### Current State (v1.13.0)
+### Current State (v1.13.1)
 
 Implemented:
 
@@ -75,6 +75,7 @@ Implemented:
 - Default debounce reduced from 800ms to 500ms, chunk concurrency raised from 2 to 4 for faster checking (v1.13.0)
 - ResizeObserver on tracked editors repositions underlines when editor geometry changes (v1.13.0)
 - Enhanced underline CSS transitions with easing for smoother appearance (v1.13.0)
+- Post-processing tense normalization: when AI corrections mix present/past verb forms, `normalizeTenseInCorrections` flips minority-direction suggestions to match the majority using a verb form lookup table (v1.13.1)
 
 Known issues still open:
 

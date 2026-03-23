@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.13.1
+
+### Bug Fixes
+- Add post-processing `normalizeTenseInCorrections` step in `grammar-rules.ts`: when AI corrections mix present and past tense verb forms (common in chunked checks), detects the majority tense direction and flips minority suggestions to match — e.g. if 6 corrections use present tense and 2 use past, flips "told"→"tells" and "didn't"→"doesn't"
+- Drops flipped corrections that would become no-ops (e.g. "gets"→"got" flipped to "gets" when original is already "gets")
+- Uses a 75+ entry verb form lookup table covering common regular and irregular verbs plus contractions
+
 ## v1.13.0
 
 ### Performance
