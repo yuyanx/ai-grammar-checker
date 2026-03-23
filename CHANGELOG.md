@@ -1,27 +1,8 @@
 # Changelog
 
-## v1.14.1
+## v1.13.0–v1.14.1 (reverted)
 
-### Fixes
-- Revert two-pass detection from v1.14.0 — caused oscillating suggestions where second pass contradicted first pass
-
-## v1.14.0
-
-### Features
-- Run a second-pass recheck on the correctedText when the first pass found errors, so subtle grammar issues (pronoun-antecedent agreement, parallel structure) that get missed when the model is distracted by obvious errors can be caught in a cleaner second pass
-- Merge second-pass errors with first-pass errors, deduplicating by offset
-
-## v1.13.5
-
-### Bug Fixes
-- Revert model from gemini-2.5-flash back to gemini-2.5-flash-lite — Flash offered no detection improvement without thinking mode but was slower and more expensive
-- Revert check request timeout from 30s back to 15s to match Flash Lite's faster response time
-
-## v1.13.4
-
-### Bug Fixes
-- Increase check request timeout from 15s to 30s to accommodate Gemini 2.5 Flash which is slower than Flash Lite
-- Downgrade timeout warning to console.log to avoid noise in the extensions error page
+All model upgrade and two-pass detection experiments reverted — caused instability with no net improvement. Back to v1.12.35 baseline.
 
 ## v1.13.3
 
