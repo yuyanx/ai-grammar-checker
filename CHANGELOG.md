@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.13.2
+
+### Bug Fixes
+- Remove `responseMimeType` and `responseSchema` from Gemini request when thinking is enabled, as structured JSON output is incompatible with thinking mode and causes empty responses
+- Increase `maxOutputTokens` from 1024 to 2048 to accommodate thinking + response
+
 ## v1.13.1
 
 ### Bug Fixes
