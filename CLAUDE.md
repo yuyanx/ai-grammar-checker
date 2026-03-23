@@ -47,7 +47,7 @@ Important areas:
 - `src/shared/grammar-rules.ts`: deterministic local grammar detection (modal parallel structure, `isVerbProtectedByModal`, `filterModalProtectedErrors`)
 - `src/shared/language-detect.ts`: English-only language gating
 
-### Current State (v1.13.4)
+### Current State (v1.13.5)
 
 Implemented:
 
@@ -82,6 +82,7 @@ Implemented:
 - Cache protection: worse results (fewer errors) don't overwrite richer cached results from concurrent checks (v1.13.3)
 - "was"→"were" corrections upgraded to present progressive form during tense normalization to present (v1.13.3)
 - Fuzzy text comparison (`textsEquivalent`) prevents spurious re-checks when contenteditable editors restructure DOM without changing visible text, preserving richer error results from earlier checks (v1.13.4)
+- `visibilitychange` recovery now only fires for stale checks (>20s), preventing tab-switch from killing in-flight checks; all recovery/focus paths use `textsEquivalent` (v1.13.5)
 
 Known issues still open:
 

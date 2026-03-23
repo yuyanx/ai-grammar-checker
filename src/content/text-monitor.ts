@@ -559,7 +559,7 @@ export async function startMonitoring(): Promise<void> {
   });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
-      recoverVisiblePendingChecks();
+      recoverVisiblePendingChecks(true);
     }
   });
   window.addEventListener("pageshow", () => {
@@ -923,8 +923,8 @@ function primeElementOnFocus(element: HTMLElement): void {
     return;
   }
 
-  if (text === state.lastText) return;
-  if (text === state.pendingText) {
+  if (textsEquivalent(text, state.lastText)) return;
+  if (textsEquivalent(text, state.pendingText ?? "")) {
     if (isPendingRequestStale(state)) {
       console.warn("[AI Grammar Checker] Clearing stale pending check on focus");
       invalidatePendingRequest(state, text);
@@ -1250,7 +1250,7 @@ function clearRequestTimeout(state: ElementState): void {
 
 function invalidatePendingRequest(state: ElementState, pendingText?: string): void {
   clearRequestTimeout(state);
-  if (!pendingText || state.pendingText === pendingText) {
+  if (!pendingText || textsEquivalent(state.pendingText ?? "", pendingText)) {
     state.pendingText = null;
     state.pendingStartedAt = null;
   }
@@ -1265,7 +1265,7 @@ function recoverVisiblePendingChecks(onlyStale = false): void {
     if (onlyStale && !isPendingRequestStale(state)) continue;
 
     const currentText = normalizeText(getElementText(element));
-    if (currentText !== state.pendingText) {
+    if (!textsEquivalent(currentText, state.pendingText ?? "")) {
       invalidatePendingRequest(state);
       if (isElementActive(element)) {
         updateWidget(element, currentText.trim().length >= 10 ? "ready" : "idle");
@@ -1275,7 +1275,7 @@ function recoverVisiblePendingChecks(onlyStale = false): void {
       continue;
     }
 
-    console.warn("[AI Grammar Checker] Recovering stale pending check after tab became visible");
+    console.log("[AI Grammar Checker] Recovering stale pending check after tab became visible");
     invalidatePendingRequest(state, currentText);
     if (currentText.trim().length >= 10) {
       void checkElement(element);
@@ -1301,7 +1301,7 @@ function recoverElementIfStuck(element: HTMLElement, forceRecheck = false): void
       console.warn("[AI Grammar Checker] Recovering stale checking widget with pending text");
       const pendingText = state.pendingText;
       invalidatePendingRequest(state, pendingText);
-      if (normalizeText(getElementText(element)) === pendingText && pendingText.trim().length >= 10) {
+      if (textsEquivalent(normalizeText(getElementText(element)), pendingText) && pendingText.trim().length >= 10) {
         void checkElement(element);
       } else if (isElementActive(element)) {
         updateWidget(element, "ready");
