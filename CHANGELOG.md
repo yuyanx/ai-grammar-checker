@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.13.3
+
+### Bug Fixes
+- Revert thinking budget to 0 and restore JSON schema constraint to fix broken detection — thinking mode is incompatible with Gemini structured output and caused both slowness and missed errors
+
 ## v1.13.2
 
 ### Bug Fixes

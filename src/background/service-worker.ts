@@ -771,8 +771,31 @@ async function callGemini(
       ],
       generationConfig: {
         temperature: 0,
-        maxOutputTokens: 2048,
-        thinkingConfig: { thinkingBudget: 1024 },
+        maxOutputTokens: 1024,
+        thinkingConfig: { thinkingBudget: 0 },
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "object",
+          properties: {
+            correctedText: { type: "string" },
+            errors: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  original: { type: "string" },
+                  suggestion: { type: "string" },
+                  offset: { type: "integer" },
+                  length: { type: "integer" },
+                  type: { type: "string" },
+                  explanation: { type: "string" },
+                },
+                required: ["original", "suggestion", "offset", "length", "type", "explanation"],
+              },
+            },
+          },
+          required: ["correctedText", "errors"],
+        },
       },
     }),
   });
