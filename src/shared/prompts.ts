@@ -50,11 +50,17 @@ Output: {"correctedText": "My friend kept saying, \"This one looks better than t
   {"original": "one", "suggestion": "one.\"", "offset": 61, "length": 3, "type": "punctuation", "explanation": "Add closing punctuation and quotation mark."}
 ]}
 
-Example 3 (tense consistency)
+Example 3 (tense consistency — past tense narrative)
 Input: "The cat jumped on the table and tried to eat some food. It doesn't know it is not allowed to be there."
 Output: {"correctedText": "The cat jumped on the table and tried to eat some food. It didn't know it was not allowed to be there.", "errors": [
   {"original": "doesn't", "suggestion": "didn't", "offset": 57, "length": 7, "type": "grammar", "explanation": "Use past tense 'didn't' to match the narrative tense (jumped, tried)."},
   {"original": "is", "suggestion": "was", "offset": 72, "length": 2, "type": "grammar", "explanation": "Use past tense 'was' to match the narrative tense."}
+]}
+
+Example 4 (tense consistency — present tense narrative)
+Input: "She brings her book and reads it in class. She feels happy because she learned something new."
+Output: {"correctedText": "She brings her book and reads it in class. She feels happy because she learns something new.", "errors": [
+  {"original": "learned", "suggestion": "learns", "offset": 74, "length": 7, "type": "grammar", "explanation": "Use present tense 'learns' to match the narrative tense (brings, reads, feels)."}
 ]}
 
 Rules:
@@ -64,7 +70,7 @@ Rules:
 - Only fix genuine errors. Do not alter meaning, tone, or style.
 - Do NOT hallucinate errors.
 - Each correction MUST be consistent with all other corrections. correctedText must be correct as a whole.
-- When most verbs in a passage share one tense, flag the outliers that break consistency. Do not force all text to past tense — only correct genuine tense inconsistencies within the same narrative context.
+- IMPORTANT: First determine the dominant tense of the passage, then make ALL verb corrections consistent with that tense. Every verb you correct must agree with the same tense. Do not mix past and present tense corrections in the same narrative.
 - If no errors, return {"correctedText": "<the original text>", "errors": []}.
 - Output ONLY the JSON object.`;
 
@@ -104,7 +110,7 @@ Return ONLY a JSON object: {"correctedText": "...", "errors": [...]}
 Rules:
 - text.substring(offset, offset + length) MUST exactly equal "original".
 - Prefer many small objective fixes over missing obvious errors.
-- When most verbs in a passage share one tense, flag the outliers that break consistency. Do not force all text to past tense — only correct genuine tense inconsistencies within the same narrative context.
+- IMPORTANT: First determine the dominant tense of the passage, then make ALL verb corrections consistent with that tense. Every verb you correct must agree with the same tense. Do not mix past and present tense corrections in the same narrative.
 - If the text truly has no errors, return {"correctedText": "<the original text>", "errors": []}.
 - Output ONLY the JSON object.`;
 
