@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.13.0
+
+### Features
+- Upgrade Gemini model from `gemini-2.5-flash-lite` to `gemini-2.5-flash` for significantly better cross-clause grammar detection (pronoun-antecedent agreement, parallel structure, etc.)
+
 ## v1.12.35
 
 ### Improvements
