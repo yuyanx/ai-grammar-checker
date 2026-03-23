@@ -243,8 +243,14 @@ async function handleCheckGrammar(
   errors = mergeLocalGrammarErrors(errors, localGrammarErrors);
   console.log("[AI Grammar Checker] Validated errors:", errors.length, JSON.stringify(errors));
 
+  // For chunked text, rebuild corrected text from the validated error list
+  // to avoid chunk-boundary artifacts (duplicated words, misaligned punctuation)
+  const correctedText = chunked
+    ? buildCorrectedTextFromErrors(text, errors)
+    : (parsed.correctedText ?? text);
+
   // Cache the unfiltered result
-  setCache(cacheKey, errors, parsed.correctedText);
+  setCache(cacheKey, errors, correctedText);
 
   // Filter by user preferences
   if (!settings.checkGrammar) errors = errors.filter((e) => e.type !== "grammar");
@@ -255,7 +261,7 @@ async function handleCheckGrammar(
     type: "CHECK_GRAMMAR_RESULT",
     requestId: request.requestId,
     errors,
-    correctedText: parsed.correctedText,
+    correctedText,
     chunked,
   };
 }
@@ -457,6 +463,33 @@ function splitIntoSentenceSlices(text: string): Array<{ start: number; end: numb
 function normalizeCorrectedText(originalText: string, correctedText: string): string {
   const originalTrailing = originalText.match(/\s*$/)?.[0] ?? "";
   return correctedText.replace(/\s*$/, originalTrailing);
+}
+
+function buildCorrectedTextFromErrors(originalText: string, errors: GrammarError[]): string {
+  if (errors.length === 0) return originalText;
+
+  // Sort by offset ascending and remove overlapping errors (keep first)
+  const sorted = [...errors].sort((a, b) => a.offset - b.offset);
+  const nonOverlapping: GrammarError[] = [];
+  let lastEnd = 0;
+  for (const error of sorted) {
+    if (error.offset >= lastEnd) {
+      nonOverlapping.push(error);
+      lastEnd = error.offset + error.length;
+    }
+  }
+
+  // Build corrected text by applying replacements left to right
+  let result = "";
+  let cursor = 0;
+  for (const error of nonOverlapping) {
+    result += originalText.slice(cursor, error.offset);
+    result += error.suggestion;
+    cursor = error.offset + error.length;
+  }
+  result += originalText.slice(cursor);
+
+  return result;
 }
 
 async function callConfiguredProvider(

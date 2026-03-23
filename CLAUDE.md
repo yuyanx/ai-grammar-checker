@@ -47,7 +47,7 @@ Important areas:
 - `src/shared/grammar-rules.ts`: deterministic local grammar detection (modal parallel structure, `isVerbProtectedByModal`, `filterModalProtectedErrors`)
 - `src/shared/language-detect.ts`: English-only language gating
 
-### Current State (v1.12.51)
+### Current State (v1.12.52)
 
 Implemented:
 
@@ -68,6 +68,7 @@ Implemented:
 - Fix All for contenteditable uses stepwise inline fallback per fix with verification (v1.12.49)
 - Reverted prompt to v1.12.36 baseline: removed tense consistency examples, number agreement rule, and dominant-tense instruction that degraded detection on chunked long text (v1.12.51)
 - Reverted chunk size increase from v1.12.50 — small chunks (3 sentences/260 chars) produce better error detection (v1.12.51)
+- Chunked corrected text is now rebuilt from the validated error list instead of concatenating chunk outputs, eliminating boundary artifacts like duplicated words (v1.12.52)
 
 Known issues still open:
 
