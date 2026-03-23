@@ -3,6 +3,22 @@ import { isDarkMode } from "./dark-mode.js";
 
 export type WidgetState = "idle" | "ready" | "checking" | "errors" | "clean" | "error";
 type WidgetPresentation = "compact" | "full";
+type StableCompactControlRow = {
+  rowRect: DOMRect;
+  clusterRect: DOMRect;
+  actionStart: number;
+  top: number;
+};
+type StableCompactAnchor = {
+  element: HTMLElement;
+  rect: DOMRect;
+  controlRow: StableCompactControlRow;
+};
+type WidgetSource = {
+  element: HTMLElement;
+  rect: DOMRect;
+  visibilityRect: DOMRect;
+};
 
 const widgetMap = new WeakMap<HTMLElement, string>();
 const widgetElements = new Set<HTMLElement>();
@@ -23,6 +39,14 @@ const COMPACT_INSET = 8;
 const COMPACT_SEARCH_STEP = 2;
 const COMPACT_ACTION_GAP = 16;
 const COMPACT_OUTSIDE_GAP = 6;
+const STABLE_COMPACT_SLOT_SIZE = 20;
+const STABLE_COMPACT_MAX_HEIGHT = 320;
+const EXPANDED_WIDGET_SOURCE_MAX_HEIGHT = 72;
+const CONTROL_ROW_GROUP_TOLERANCE = 28;
+const TRAILING_CLUSTER_GAP = 28;
+const LARGE_ROW_COMPOSER_MIN_HEIGHT = 96;
+const WIDE_STABLE_COMPACT_MIN_WIDTH = 420;
+const WIDE_STABLE_COMPACT_MAX_HEIGHT = 720;
 
 /**
  * Show or update the floating status widget near a text field.
@@ -59,6 +83,10 @@ export function refreshWidget(element: HTMLElement): void {
   renderWidget(element, true);
 }
 
+export function getWidgetState(element: HTMLElement): WidgetState | null {
+  return widgetStates.get(element)?.state ?? null;
+}
+
 export function getWidgetRect(element: HTMLElement): DOMRect | null {
   const containerId = widgetMap.get(element);
   if (!containerId) return null;
@@ -75,6 +103,7 @@ function renderWidget(element: HTMLElement, positionOnly = false): void {
   console.log("[AI Grammar Checker] updateWidget called, state:", state, "errorCount:", errorCount, "hasCallback:", !!onClickErrors);
   const containerId = getWidgetContainerId(element);
   const container = getOrCreateContainer(containerId);
+  const rootRect = element.getBoundingClientRect();
 
   // Don't show for idle state
   if (state === "idle" || (state === "clean" && hideAt && Date.now() >= hideAt)) {
@@ -83,13 +112,64 @@ function renderWidget(element: HTMLElement, positionOnly = false): void {
     return;
   }
 
-  const rect = element.getBoundingClientRect();
-  const textRect = getCompactTextRect(element, rect);
-  const presentation = getWidgetPresentation(element, rect, textRect);
+  const source = getWidgetSource(element);
+  const rect = source.rect;
+  const visibilityRect = source.visibilityRect;
+  if (!isRectViewportVisible(rootRect) || !isRectViewportVisible(visibilityRect)) {
+    container.innerHTML = "";
+    widgetRenderMeta.delete(element);
+    return;
+  }
+  const baseAnchor = getWidgetAnchor(source.element, rect);
+  const stableCompactAnchor = getStableCompactAnchor(source.element, rect);
+  const compactAnchorCandidate = stableCompactAnchor
+    ? { element: stableCompactAnchor.element, rect: stableCompactAnchor.rect }
+    : getCompactAnchor(source.element, rect);
+  const textRect = getCompactTextRect(source.element, rect);
+  const stableCompactControlRow = stableCompactAnchor?.controlRow ?? getStableCompactControlRow(
+    compactAnchorCandidate.element,
+    source.element,
+    compactAnchorCandidate.rect
+  );
+  const activeStableCompactControlRow = stableCompactControlRow && shouldUseStableCompactControlRow(
+    compactAnchorCandidate.rect,
+    rect,
+    source.element,
+    stableCompactControlRow
+  )
+    ? stableCompactControlRow
+    : null;
+  const forceCompact = shouldForceCompactPresentation(
+    compactAnchorCandidate,
+    source.element,
+    rect,
+    activeStableCompactControlRow
+  );
+  const preferExpandedPresentation = shouldPreferExpandedPresentation(baseAnchor.rect, rect);
+  const presentation = activeStableCompactControlRow
+    ? "compact"
+    : preferExpandedPresentation
+    ? "full"
+    : forceCompact
+      ? "compact"
+      : getWidgetPresentation(source.element, baseAnchor.rect, textRect);
   const isCompact = presentation === "compact";
-  const compactAnchor = isCompact ? getCompactAnchor(element, rect) : null;
-  const anchorRect = compactAnchor?.rect || rect;
+  const compactAnchor = isCompact ? compactAnchorCandidate : null;
+  const ignoreInlinePlaceholderText = !!(isCompact && compactAnchor && shouldIgnoreCompactPlaceholderText(source.element, compactAnchor));
+  const anchorRect = compactAnchor?.rect || baseAnchor.rect;
   const compactTextRect = isCompact ? textRect : rect;
+  const useSidePlacement = shouldUseSideWidgetPlacement(anchorRect, rect, isCompact);
+
+  if (!isRectViewportVisible(anchorRect)) {
+    container.innerHTML = "";
+    widgetRenderMeta.delete(element);
+    return;
+  }
+  if (activeStableCompactControlRow && !isRectViewportVisible(activeStableCompactControlRow.rowRect)) {
+    container.innerHTML = "";
+    widgetRenderMeta.delete(element);
+    return;
+  }
 
   // Don't show widget for hidden/invisible elements.
   // For compact editors like Instagram, the editable span can be tiny even when the
@@ -103,12 +183,22 @@ function renderWidget(element: HTMLElement, positionOnly = false): void {
   const dark = isDarkMode();
 
   // Use smaller widget for compact editors (e.g. comment boxes)
-  const size = isCompact ? getCompactWidgetSize(state) : 28;
+  const size = isCompact ? getCompactWidgetSize() : 28;
   const inset = isCompact ? COMPACT_INSET : 6;
 
   const position = isCompact && compactAnchor
-    ? getCompactWidgetPosition(element, compactTextRect, compactAnchor, size)
-    : getCornerWidgetPosition(anchorRect, size, inset);
+    ? getCompactWidgetPosition(
+        source.element,
+        compactTextRect,
+        compactAnchor,
+        size,
+        rect,
+        ignoreInlinePlaceholderText,
+        activeStableCompactControlRow
+      )
+    : useSidePlacement
+      ? getSideWidgetPosition(anchorRect, size, inset)
+      : getCornerWidgetPosition(anchorRect, size, inset);
   const existing = container.firstElementChild;
   const lastRendered = widgetRenderMeta.get(element);
   if (
@@ -256,14 +346,19 @@ function getCornerWidgetPosition(rect: DOMRect, size: number, inset: number): { 
   return { top, left };
 }
 
+function getSideWidgetPosition(rect: DOMRect, size: number, inset: number): { top: number; left: number } {
+  const top = clamp(rect.top + (rect.height - size) / 2, VIEWPORT_MARGIN, window.innerHeight - size - VIEWPORT_MARGIN);
+  const left = clamp(rect.right - size - inset, VIEWPORT_MARGIN, window.innerWidth - size - VIEWPORT_MARGIN);
+  return { top, left };
+}
+
 function positionWidgetElement(widget: HTMLElement, position: { top: number; left: number }): void {
   widget.style.top = `${position.top}px`;
   widget.style.left = `${position.left}px`;
 }
 
-function getCompactWidgetSize(state: WidgetState): number {
-  if (state === "errors" || state === "ready") return 12;
-  return 18;
+function getCompactWidgetSize(): number {
+  return STABLE_COMPACT_SLOT_SIZE;
 }
 
 function getWidgetPresentation(
@@ -334,17 +429,53 @@ function getCompactWidgetPosition(
   editorElement: HTMLElement,
   textRect: DOMRect,
   anchor: { element: HTMLElement; rect: DOMRect },
-  size: number
+  size: number,
+  sourceRect: DOMRect,
+  ignoreInlinePlaceholderText: boolean = false,
+  stableCompactControlRow: StableCompactControlRow | null = null
 ): { top: number; left: number } {
   const minLeft = clamp(anchor.rect.left + COMPACT_INSET, VIEWPORT_MARGIN, window.innerWidth - size - VIEWPORT_MARGIN);
   const maxLeft = clamp(anchor.rect.right - size - COMPACT_INSET, minLeft, window.innerWidth - size - VIEWPORT_MARGIN);
   const minTop = clamp(anchor.rect.top + COMPACT_INSET, VIEWPORT_MARGIN, window.innerHeight - size - VIEWPORT_MARGIN);
   const maxTop = clamp(anchor.rect.bottom - size - COMPACT_INSET, minTop, window.innerHeight - size - VIEWPORT_MARGIN);
-  const preferredTop = clamp(anchor.rect.top + (anchor.rect.height - size) / 2, minTop, maxTop);
-  const textBoundary = textRect.right + COMPACT_INSET;
-  const rowObstacles = getCompactRowObstacles(anchor.element, editorElement, anchor.rect);
-  const actionStart = getExplicitActionStart(anchor.element, editorElement, textRect.right, anchor.rect)
-    ?? getInlineActionStart(rowObstacles, textRect.right, anchor.rect);
+  const preferredTop = clamp(
+    stableCompactControlRow?.top ?? sourceRect.top + (sourceRect.height - size) / 2,
+    minTop,
+    maxTop
+  );
+  if (stableCompactControlRow) {
+    const left = clamp(stableCompactControlRow.actionStart - size - COMPACT_ACTION_GAP, minLeft, maxLeft);
+    const candidate = new DOMRect(left, preferredTop, size, size);
+    if (
+      isWithinRect(candidate, anchor.rect) &&
+      candidate.right + COMPACT_ACTION_GAP <= stableCompactControlRow.actionStart + 1
+    ) {
+      return { top: preferredTop, left };
+    }
+  }
+  if (isInlineRowRect(anchor.rect)) {
+    return getInlineRightSafeCompactPosition(editorElement, anchor, size, minLeft, maxLeft, minTop, maxTop);
+  }
+  const stableActionStart = getStableCompactActionStart(anchor.element, editorElement, sourceRect, anchor.rect);
+  if (stableActionStart !== null && isStableCompactAnchorRect(anchor.rect)) {
+    const stableLeft = clamp(stableActionStart - size - COMPACT_ACTION_GAP, minLeft, maxLeft);
+    const stableCandidate = new DOMRect(stableLeft, preferredTop, size, size);
+    if (
+      isWithinRect(stableCandidate, anchor.rect) &&
+      stableCandidate.right + COMPACT_ACTION_GAP <= stableActionStart + 1
+    ) {
+      return { top: preferredTop, left: stableLeft };
+    }
+  }
+  const hasMeasuredText = !ignoreInlinePlaceholderText && !rectApproximatelyEquals(textRect, anchor.rect);
+  const effectiveTextRight = ignoreInlinePlaceholderText ? anchor.rect.left + COMPACT_INSET : textRect.right;
+  const textBoundary = hasMeasuredText ? textRect.right + COMPACT_INSET : minLeft;
+  const rowObstacles = [
+    ...getCompactRowObstacles(anchor.element, editorElement, anchor.rect),
+    ...getEmbeddedControlObstacles(editorElement, textRect, anchor.rect),
+  ];
+  const actionStart = getExplicitActionStart(anchor.element, editorElement, effectiveTextRight, anchor.rect)
+    ?? getInlineActionStart(rowObstacles, effectiveTextRight, anchor.rect);
   const safeActionLeft = actionStart !== null
     ? Math.max(minLeft, actionStart - size - COMPACT_ACTION_GAP)
     : null;
@@ -362,10 +493,9 @@ function getCompactWidgetPosition(
     return outsidePosition;
   }
 
-  const obstacleRects = [
-    inflateRect(textRect, 10, 6),
-    ...rowObstacles,
-  ];
+  const obstacleRects = hasMeasuredText
+    ? [inflateRect(textRect, 10, 6), ...rowObstacles]
+    : rowObstacles;
   const topCandidates = buildTopCandidates(preferredTop, minTop, maxTop, COMPACT_SEARCH_STEP);
 
   for (let left = maxLeft; left >= minLeft; left -= COMPACT_SEARCH_STEP) {
@@ -381,6 +511,199 @@ function getCompactWidgetPosition(
   }
 
   return outsidePosition;
+}
+
+function getInlineRightSafeCompactPosition(
+  editorElement: HTMLElement,
+  anchor: { element: HTMLElement; rect: DOMRect },
+  size: number,
+  minLeft: number,
+  maxLeft: number,
+  minTop: number,
+  maxTop: number
+): { top: number; left: number } {
+  const preferredTop = clamp(
+    anchor.rect.top + (anchor.rect.height - size) / 2,
+    minTop,
+    maxTop
+  );
+  const obstacles = [
+    ...getCompactRowObstacles(anchor.element, editorElement, anchor.rect),
+    ...getEmbeddedControlObstacles(editorElement, anchor.rect, anchor.rect),
+  ];
+  const actionStart = getExplicitActionStart(anchor.element, editorElement, anchor.rect.left, anchor.rect)
+    ?? getInlineActionStart(obstacles, anchor.rect.left, anchor.rect);
+
+  if (actionStart !== null) {
+    const left = clamp(actionStart - size - COMPACT_ACTION_GAP, minLeft, maxLeft);
+    const candidate = new DOMRect(left, preferredTop, size, size);
+    if (isWithinRect(candidate, anchor.rect) && candidate.right + COMPACT_ACTION_GAP <= actionStart + 1) {
+      return { top: preferredTop, left };
+    }
+  }
+
+  return {
+    top: preferredTop,
+    left: clamp(anchor.rect.right - size - COMPACT_INSET, minLeft, maxLeft),
+  };
+}
+
+function shouldForceCompactPresentation(
+  anchor: { element: HTMLElement; rect: DOMRect },
+  editorElement: HTMLElement,
+  sourceRect: DOMRect,
+  stableCompactControlRow: StableCompactControlRow | null
+): boolean {
+  if (stableCompactControlRow) return true;
+  if (!isStableCompactAnchorRect(anchor.rect)) return false;
+  if (shouldPreferExpandedPresentation(anchor.rect, sourceRect)) return false;
+  return getStableCompactActionStart(anchor.element, editorElement, sourceRect, anchor.rect) !== null;
+}
+
+function shouldPreferExpandedPresentation(anchorRect: DOMRect, sourceRect: DOMRect): boolean {
+  return (
+    anchorRect.width >= 280 &&
+    anchorRect.height >= 120 &&
+    sourceRect.height <= EXPANDED_WIDGET_SOURCE_MAX_HEIGHT &&
+    anchorRect.height > sourceRect.height * 1.8
+  );
+}
+
+function shouldUseStableCompactControlRow(
+  anchorRect: DOMRect,
+  sourceRect: DOMRect,
+  editorElement: HTMLElement,
+  controlRow: StableCompactControlRow
+): boolean {
+  if (!isStableCompactAnchorRect(anchorRect)) return false;
+  if (isInlineRowRect(anchorRect)) return true;
+
+  const rowRect = controlRow.rowRect;
+  const rowNearBottom = rowRect.bottom >= anchorRect.top + anchorRect.height * 0.55;
+  const isCustomEditable = !(editorElement instanceof HTMLTextAreaElement) && !(editorElement instanceof HTMLInputElement);
+  if (rowNearBottom && isCustomEditable) return true;
+  if (rowNearBottom) return true;
+
+  if (anchorRect.height <= 120) return true;
+  return sourceRect.height >= anchorRect.height * 0.42;
+}
+
+function getStableCompactActionStart(
+  anchorElement: HTMLElement,
+  editorElement: HTMLElement,
+  sourceRect: DOMRect,
+  anchorRect: DOMRect
+): number | null {
+  const rowObstacles = [
+    ...getCompactRowObstacles(anchorElement, editorElement, anchorRect),
+    ...getEmbeddedControlObstacles(editorElement, sourceRect, anchorRect),
+  ];
+  return getExplicitActionStart(anchorElement, editorElement, anchorRect.left, anchorRect)
+    ?? getInlineActionStart(rowObstacles, anchorRect.left, anchorRect);
+}
+
+function getStableCompactControlRow(
+  anchorElement: HTMLElement,
+  editorElement: HTMLElement,
+  anchorRect: DOMRect
+): StableCompactControlRow | null {
+  if (!isStableCompactAnchorRect(anchorRect)) return null;
+
+  const controlRects = mergeObstacleRects([
+    ...getInteractiveControlRects(anchorElement, editorElement, anchorRect),
+    ...getActionLabelRects(anchorElement, editorElement, anchorRect),
+  ]);
+
+  if (controlRects.length === 0) return null;
+
+  const rows = groupControlRectsByRow(controlRects);
+  if (rows.length === 0) return null;
+
+  let bestRow: StableCompactControlRow | null = null;
+  let bestScore = -Infinity;
+
+  for (const row of rows) {
+    const clusterRect = getTrailingClusterRect(row.rects);
+    if (!clusterRect) continue;
+    if (clusterRect.right < anchorRect.left + anchorRect.width * 0.6) continue;
+
+    const actionStart = clusterRect.left;
+    const top = clamp(
+      row.rowRect.top + (row.rowRect.height - STABLE_COMPACT_SLOT_SIZE) / 2,
+      anchorRect.top + COMPACT_INSET,
+      anchorRect.bottom - STABLE_COMPACT_SLOT_SIZE - COMPACT_INSET
+    );
+    const candidate = new DOMRect(
+      actionStart - STABLE_COMPACT_SLOT_SIZE - COMPACT_ACTION_GAP,
+      top,
+      STABLE_COMPACT_SLOT_SIZE,
+      STABLE_COMPACT_SLOT_SIZE
+    );
+    if (!isWithinRect(candidate, anchorRect)) continue;
+
+    const rightBias = (clusterRect.right - anchorRect.left) / Math.max(anchorRect.width, 1);
+    const lowerBias = (row.rowRect.bottom - anchorRect.top) / Math.max(anchorRect.height, 1);
+    const score = rightBias * 1000 + lowerBias * 1200 + row.rects.length * 10;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestRow = { rowRect: row.rowRect, clusterRect, actionStart, top };
+    }
+  }
+
+  return bestRow;
+}
+
+function shouldIgnoreCompactPlaceholderText(
+  editorElement: HTMLElement,
+  anchor: { element: HTMLElement; rect: DOMRect }
+): boolean {
+  if (!isInlineRowRect(anchor.rect)) return false;
+  return !hasUserAuthoredText(editorElement);
+}
+
+function hasUserAuthoredText(element: HTMLElement): boolean {
+  if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
+    return element.value.trim().length > 0;
+  }
+
+  const text = normalizeCompactText(element.innerText || element.textContent || "");
+  if (!text) return false;
+
+  const placeholders = getPlaceholderSignals(element);
+  if (placeholders.some((placeholder) => normalizeCompactText(placeholder) === text)) {
+    return false;
+  }
+
+  return true;
+}
+
+function getPlaceholderSignals(element: HTMLElement): string[] {
+  const signals = new Set<string>();
+  let current: HTMLElement | null = element;
+  let depth = 0;
+
+  while (current && depth < 5) {
+    for (const value of [
+      current.getAttribute("placeholder"),
+      current.getAttribute("aria-placeholder"),
+      current.getAttribute("data-placeholder"),
+      current.getAttribute("aria-label"),
+    ]) {
+      if (normalizeCompactText(value || "")) {
+        signals.add(value || "");
+      }
+    }
+
+    current = current.parentElement;
+    depth += 1;
+  }
+
+  return Array.from(signals);
+}
+
+function normalizeCompactText(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function getOutsideCompactWidgetPosition(
@@ -436,18 +759,72 @@ function getCompactTextRect(element: HTMLElement, fallbackRect: DOMRect): DOMRec
 }
 
 function getCompactAnchor(element: HTMLElement, fallbackRect: DOMRect): { element: HTMLElement; rect: DOMRect } {
-  let bestElement = element;
-  let bestRect = fallbackRect;
-  let current = element.parentElement;
+  type CandidateAnchor = { element: HTMLElement; rect: DOMRect; score: number };
+  const candidates: CandidateAnchor[] = [];
+  let current: HTMLElement | null = element;
   let depth = 0;
 
-  while (current && depth < 6) {
+  while (current && depth < 10) {
     const rect = current.getBoundingClientRect();
+    const usable = current === element || isUsableCompactAnchor(rect, fallbackRect);
+    if (usable) {
+      const stableRow = isStableCompactAnchorRect(rect)
+        ? getStableCompactControlRow(current, element, rect)
+        : null;
+      const hasControls = hasCompactRowControls(current, element, fallbackRect, rect);
+      const rowLike = isInlineRowRect(rect);
+      const widthPenalty = Math.max(0, rect.width - Math.max(fallbackRect.width + 220, 520)) / 10;
+      const heightPenalty = Math.max(0, rect.height - 120) * (stableRow ? 0.75 : 3);
+      const depthPenalty = depth * 6;
+      const score =
+        (stableRow ? 900 : 0) +
+        (hasControls ? 500 : 0) +
+        (rowLike ? 160 : 0) +
+        Math.min(rect.width, 1200) / 6 -
+        widthPenalty -
+        heightPenalty -
+        depthPenalty;
 
-    if (isUsableCompactAnchor(rect, fallbackRect)) {
-      if (rect.width >= bestRect.width) {
-        bestElement = current;
-        bestRect = rect;
+      candidates.push({ element: current, rect, score });
+    }
+
+    current = current.parentElement;
+    depth += 1;
+  }
+
+  if (candidates.length === 0) {
+    return { element, rect: fallbackRect };
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+  return { element: best.element, rect: best.rect };
+}
+
+function getStableCompactAnchor(element: HTMLElement, fallbackRect: DOMRect): StableCompactAnchor | null {
+  const candidates: Array<StableCompactAnchor & { score: number }> = [];
+  let current: HTMLElement | null = element;
+  let depth = 0;
+
+  while (current && depth < 12) {
+    const rect = current.getBoundingClientRect();
+    if (current === element || isUsableCompactAnchor(rect, fallbackRect)) {
+      const controlRow = isStableCompactAnchorRect(rect)
+        ? getStableCompactControlRow(current, element, rect)
+        : null;
+      if (controlRow) {
+        const widthPenalty = Math.max(0, rect.width - Math.max(fallbackRect.width + 260, 820)) / 18;
+        const heightPenalty = Math.max(0, rect.height - 220) * 0.35;
+        const depthPenalty = depth * 28;
+        const rowBias = (controlRow.rowRect.bottom - rect.top) / Math.max(rect.height, 1);
+        const score =
+          2500 +
+          rowBias * 180 +
+          Math.min(rect.width, 1400) / 12 -
+          widthPenalty -
+          heightPenalty -
+          depthPenalty;
+        candidates.push({ element: current, rect, controlRow, score });
       }
     }
 
@@ -455,18 +832,157 @@ function getCompactAnchor(element: HTMLElement, fallbackRect: DOMRect): { elemen
     depth += 1;
   }
 
-  return { element: bestElement, rect: bestRect };
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+  return { element: best.element, rect: best.rect, controlRow: best.controlRow };
+}
+
+function isStableCompactAnchorRect(rect: DOMRect): boolean {
+  return (
+    rect.width >= 220 &&
+    rect.height >= 32 &&
+    (rect.height <= STABLE_COMPACT_MAX_HEIGHT || isWideStableCompactAnchorRect(rect))
+  );
+}
+
+function isWideStableCompactAnchorRect(rect: DOMRect): boolean {
+  return (
+    rect.width >= WIDE_STABLE_COMPACT_MIN_WIDTH &&
+    rect.height <= WIDE_STABLE_COMPACT_MAX_HEIGHT &&
+    rect.width > rect.height * 1.6
+  );
+}
+
+function getWidgetAnchor(element: HTMLElement, fallbackRect: DOMRect): { element: HTMLElement; rect: DOMRect } {
+  const siteSpecificAnchor = getSiteSpecificExpandedAnchor(element, fallbackRect);
+  if (siteSpecificAnchor) {
+    return siteSpecificAnchor;
+  }
+
+  let current = element.parentElement;
+  let depth = 0;
+  while (current && depth < 12) {
+    const rect = current.getBoundingClientRect();
+    if (isExpandedWidgetAnchor(rect, fallbackRect)) {
+      return { element: current, rect };
+    }
+    current = current.parentElement;
+    depth += 1;
+  }
+
+  if (fallbackRect.width >= 120 && fallbackRect.height >= 28) {
+    return { element, rect: fallbackRect };
+  }
+
+  return { element, rect: fallbackRect };
+}
+
+function isExpandedWidgetAnchor(rect: DOMRect, fallbackRect: DOMRect): boolean {
+  if (rect.width < Math.max(200, fallbackRect.width + 40)) return false;
+  if (rect.height < Math.max(40, fallbackRect.height + 12)) return false;
+  if (rect.height > 260) return false;
+  if (rect.top > fallbackRect.top + 40) return false;
+  if (rect.left > fallbackRect.left + 80) return false;
+  if (rect.right < fallbackRect.right - 8) return false;
+  if (rect.bottom < fallbackRect.bottom - 8) return false;
+  return true;
+}
+
+function getSiteSpecificExpandedAnchor(
+  element: HTMLElement,
+  fallbackRect: DOMRect
+): { element: HTMLElement; rect: DOMRect } | null {
+  const host = location.hostname.toLowerCase();
+  if (!(host === "linkedin.com" || host.endsWith(".linkedin.com"))) {
+    return null;
+  }
+
+  let current = element.parentElement;
+  let depth = 0;
+  while (current && depth < 12) {
+    const rect = current.getBoundingClientRect();
+    const role = (current.getAttribute("role") || "").toLowerCase();
+    const signals = [
+      current.getAttribute("aria-label"),
+      current.getAttribute("aria-placeholder"),
+      current.getAttribute("data-placeholder"),
+      current.getAttribute("title"),
+      current.textContent,
+    ].join(" ").toLowerCase();
+
+    const looksLikeComposeDialog =
+      role === "dialog" ||
+      current.getAttribute("aria-modal") === "true" ||
+      /\b(share your thoughts|start a post|create a post)\b/i.test(signals);
+
+    if (
+      looksLikeComposeDialog &&
+      rect.width >= Math.max(500, fallbackRect.width + 120) &&
+      rect.height >= 220 &&
+      rect.height <= 1200 &&
+      rectContainsRect(rect, fallbackRect, 20)
+    ) {
+      return { element: current, rect };
+    }
+
+    current = current.parentElement;
+    depth += 1;
+  }
+
+  return null;
 }
 
 function isUsableCompactAnchor(rect: DOMRect, fallbackRect: DOMRect): boolean {
-  if (rect.width <= fallbackRect.width + 24) return false;
+  // Allow anchors that are effectively the same visible composer shell as the
+  // fallback rect. Large row composers (Gmail reply, ChatGPT, GitHub Copilot)
+  // often use the wrapper rect as the fallback geometry, and excluding same-size
+  // wrappers makes compact control-row detection flap as the active editable
+  // grows or shrinks while typing.
+  if (rect.width < fallbackRect.width - 8) return false;
   if (rect.height < fallbackRect.height - 8) return false;
-  if (rect.height > 120) return false;
+  if (!isStableCompactAnchorRect(rect)) return false;
   if (rect.top > fallbackRect.top + 12) return false;
   if (rect.bottom < fallbackRect.bottom - 12) return false;
-  if (rect.left > fallbackRect.left + 24) return false;
-  if (rect.right < fallbackRect.right + 16) return false;
+  if (rect.left > fallbackRect.left + 16) return false;
+  if (rect.right < fallbackRect.right + 8) return false;
   return true;
+}
+
+function hasCompactRowControls(
+  anchorElement: HTMLElement,
+  editorElement: HTMLElement,
+  fallbackRect: DOMRect,
+  anchorRect: DOMRect
+): boolean {
+  if (!isStableCompactAnchorRect(anchorRect)) return false;
+
+  const rowMidY = fallbackRect.top + fallbackRect.height / 2;
+  const interactiveSelector = [
+    "button",
+    "[role='button']",
+    "[aria-haspopup]",
+    "[aria-expanded]",
+    "[aria-pressed]",
+    "select",
+    "label",
+  ].join(", ");
+
+  for (const candidate of Array.from(anchorElement.querySelectorAll<HTMLElement>(interactiveSelector))) {
+    if (candidate === editorElement) continue;
+    if (candidate.contains(editorElement) || editorElement.contains(candidate)) continue;
+
+    const rect = candidate.getBoundingClientRect();
+    if (rect.width < 10 || rect.height < 10) continue;
+    if (!isVisibleRect(rect, anchorRect)) continue;
+    if (rect.top > rowMidY || rect.bottom < rowMidY) continue;
+
+    if (rect.left >= fallbackRect.right - 4 || rect.right <= fallbackRect.left + 4) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function buildTopCandidates(preferredTop: number, minTop: number, maxTop: number, step: number): number[] {
@@ -632,7 +1148,7 @@ function getCompactRowObstacles(
   anchorRect: DOMRect
 ): DOMRect[] {
   const obstacles: DOMRect[] = [];
-  const rowMidY = anchorRect.top + anchorRect.height / 2;
+  const rowMidY = getPreferredCompactRowMidY(anchorElement, editorElement, anchorRect);
 
   anchorElement.querySelectorAll<HTMLElement>("*").forEach((candidate) => {
     if (candidate === editorElement) return;
@@ -672,6 +1188,39 @@ function getCompactRowObstacles(
   return mergeObstacleRects(obstacles);
 }
 
+function getEmbeddedControlObstacles(
+  editorElement: HTMLElement,
+  textRect: DOMRect,
+  anchorRect: DOMRect
+): DOMRect[] {
+  const obstacles: DOMRect[] = [];
+  const interactiveSelector = [
+    "button",
+    "[role='button']",
+    "[aria-haspopup]",
+    "[aria-expanded]",
+    "[aria-pressed]",
+    "select",
+    "label",
+  ].join(", ");
+
+  editorElement.querySelectorAll<HTMLElement>(interactiveSelector).forEach((candidate) => {
+    if (candidate === editorElement) return;
+
+    const rect = candidate.getBoundingClientRect();
+    if (rect.width < 10 || rect.height < 10) return;
+    if (!isVisibleRect(rect, anchorRect)) return;
+    if (rect.right <= textRect.right + COMPACT_INSET) return;
+
+    const style = window.getComputedStyle(candidate);
+    if (style.display === "none" || style.visibility === "hidden") return;
+
+    obstacles.push(inflateRect(rect, 4, 4));
+  });
+
+  return mergeObstacleRects(obstacles);
+}
+
 function mergeObstacleRects(rects: DOMRect[]): DOMRect[] {
   const merged: DOMRect[] = [];
   const sorted = [...rects].sort((a, b) => a.left - b.left);
@@ -697,4 +1246,309 @@ function mergeObstacleRects(rects: DOMRect[]): DOMRect[] {
   }
 
   return merged;
+}
+
+function getPreferredCompactRowMidY(
+  anchorElement: HTMLElement,
+  editorElement: HTMLElement,
+  anchorRect: DOMRect
+): number {
+  const stableRow = getStableCompactControlRow(anchorElement, editorElement, anchorRect);
+  if (stableRow) {
+    return stableRow.rowRect.top + stableRow.rowRect.height / 2;
+  }
+  return anchorRect.top + anchorRect.height / 2;
+}
+
+function getInteractiveControlRects(
+  anchorElement: HTMLElement,
+  editorElement: HTMLElement,
+  anchorRect: DOMRect
+): DOMRect[] {
+  const rects: DOMRect[] = [];
+  const interactiveSelector = [
+    "button",
+    "[role='button']",
+    "[aria-haspopup]",
+    "[aria-expanded]",
+    "[aria-pressed]",
+    "select",
+    "label",
+    "a",
+  ].join(", ");
+
+  anchorElement.querySelectorAll<HTMLElement>(interactiveSelector).forEach((candidate) => {
+    if (candidate === editorElement) return;
+    if (candidate.contains(editorElement) || editorElement.contains(candidate)) return;
+
+    const rect = candidate.getBoundingClientRect();
+    if (rect.width < 10 || rect.height < 10) return;
+    if (!isVisibleRect(rect, anchorRect)) return;
+
+    const style = window.getComputedStyle(candidate);
+    if (style.display === "none" || style.visibility === "hidden") return;
+
+    rects.push(new DOMRect(rect.left, rect.top, rect.width, rect.height));
+  });
+
+  return rects;
+}
+
+function getActionLabelRects(
+  anchorElement: HTMLElement,
+  editorElement: HTMLElement,
+  anchorRect: DOMRect
+): DOMRect[] {
+  const labelPattern = /^(post|comment|reply|send)$/i;
+  const matches: DOMRect[] = [];
+
+  const walker = document.createTreeWalker(anchorElement, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    if (editorElement.contains(node)) continue;
+
+    const text = (node.textContent || "").trim();
+    if (!labelPattern.test(text)) continue;
+
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    for (const rect of Array.from(range.getClientRects())) {
+      if (rect.width < 4 || rect.height < 4) continue;
+      if (!isVisibleRect(rect, anchorRect)) continue;
+      matches.push(new DOMRect(rect.left, rect.top, rect.width, rect.height));
+    }
+  }
+
+  return matches;
+}
+
+function groupControlRectsByRow(
+  rects: DOMRect[]
+): Array<{ rects: DOMRect[]; rowRect: DOMRect; centerY: number }> {
+  const rows: Array<{ rects: DOMRect[]; rowRect: DOMRect; centerY: number }> = [];
+
+  for (const rect of [...rects].sort((a, b) => a.top - b.top)) {
+    const centerY = rect.top + rect.height / 2;
+    const existing = rows.find((row) => Math.abs(row.centerY - centerY) <= CONTROL_ROW_GROUP_TOLERANCE);
+    if (existing) {
+      existing.rects.push(rect);
+      existing.centerY = (existing.centerY * (existing.rects.length - 1) + centerY) / existing.rects.length;
+      existing.rowRect = unionRects(existing.rowRect, rect);
+      continue;
+    }
+
+    rows.push({
+      rects: [rect],
+      rowRect: new DOMRect(rect.left, rect.top, rect.width, rect.height),
+      centerY,
+    });
+  }
+
+  return rows;
+}
+
+function getTrailingClusterRect(rects: DOMRect[]): DOMRect | null {
+  if (rects.length === 0) return null;
+
+  const sorted = [...rects].sort((a, b) => a.left - b.left);
+  let cluster = new DOMRect(
+    sorted[sorted.length - 1].left,
+    sorted[sorted.length - 1].top,
+    sorted[sorted.length - 1].width,
+    sorted[sorted.length - 1].height
+  );
+
+  for (let index = sorted.length - 2; index >= 0; index -= 1) {
+    const rect = sorted[index];
+    const gap = cluster.left - rect.right;
+    if (gap > TRAILING_CLUSTER_GAP) break;
+    cluster = unionRects(cluster, rect);
+  }
+
+  return cluster;
+}
+
+function unionRects(a: DOMRect, b: DOMRect): DOMRect {
+  const left = Math.min(a.left, b.left);
+  const top = Math.min(a.top, b.top);
+  const right = Math.max(a.right, b.right);
+  const bottom = Math.max(a.bottom, b.bottom);
+  return new DOMRect(left, top, right - left, bottom - top);
+}
+
+function rectApproximatelyEquals(a: DOMRect, b: DOMRect): boolean {
+  return (
+    Math.abs(a.left - b.left) <= 1 &&
+    Math.abs(a.top - b.top) <= 1 &&
+    Math.abs(a.width - b.width) <= 1 &&
+    Math.abs(a.height - b.height) <= 1
+  );
+}
+
+function getWidgetSource(element: HTMLElement): WidgetSource {
+  const directRect = element.getBoundingClientRect();
+  const activeSource = getActiveEditableSource(element);
+  const bestDescendant = getBestRenderableEditableDescendant(element);
+  let sourceElement = activeSource ?? bestDescendant ?? null;
+
+  if (bestDescendant) {
+    if (!sourceElement || sourceElement === element || sourceElement.contains(bestDescendant)) {
+      sourceElement = bestDescendant;
+    }
+  }
+
+  if (!sourceElement) {
+    return { element, rect: directRect, visibilityRect: directRect };
+  }
+
+  const activeRect = sourceElement.getBoundingClientRect();
+  if (activeRect.width < 4 || activeRect.height < 4) {
+    return { element, rect: directRect, visibilityRect: directRect };
+  }
+
+  if (!rectContainsRect(directRect, activeRect, 6)) {
+    return { element, rect: directRect, visibilityRect: directRect };
+  }
+
+  if (directRect.height >= LARGE_ROW_COMPOSER_MIN_HEIGHT) {
+    return { element: sourceElement, rect: directRect, visibilityRect: activeRect };
+  }
+
+  return { element: sourceElement, rect: activeRect, visibilityRect: activeRect };
+}
+
+function getBestRenderableEditableDescendant(root: HTMLElement): HTMLElement | null {
+  const selector = [
+    "textarea",
+    "input[type='text']",
+    "input[type='search']",
+    "input:not([type])",
+    "[contenteditable='true']",
+    "[contenteditable='']",
+    "[contenteditable='plaintext-only']",
+    "[role='textbox']",
+    "[spellcheck='true']",
+    "[aria-multiline='true']",
+  ].join(", ");
+
+  const candidates = Array.from(root.querySelectorAll<HTMLElement>(selector))
+    .filter((candidate) => isRenderableEditableCandidate(candidate))
+    .filter((candidate) => {
+      const rect = candidate.getBoundingClientRect();
+      return rect.width >= 4 && rect.height >= 4;
+    });
+
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => scoreRenderableEditableCandidate(b, root) - scoreRenderableEditableCandidate(a, root));
+  return candidates[0] ?? null;
+}
+
+function scoreRenderableEditableCandidate(candidate: HTMLElement, root: HTMLElement): number {
+  const rect = candidate.getBoundingClientRect();
+  const role = (candidate.getAttribute("role") || "").toLowerCase();
+  let score = Math.min(rect.width * rect.height, 400000) / 1000;
+
+  if (candidate.isContentEditable) score += 220;
+  if (candidate.getAttribute("spellcheck") === "true") score += 80;
+  if ((candidate.getAttribute("aria-multiline") || "").toLowerCase() === "true") score += 80;
+  if (role === "textbox") score += 60;
+  if (candidate instanceof HTMLTextAreaElement) score += 120;
+  if (candidate instanceof HTMLInputElement) score += 40;
+
+  let depth = 0;
+  let current: HTMLElement | null = candidate;
+  while (current && current !== root && depth < 12) {
+    depth += 1;
+    current = current.parentElement;
+  }
+  score -= depth * 6;
+
+  return score;
+}
+
+function isInlineRowRect(rect: DOMRect): boolean {
+  return rect.width >= 220 && rect.height >= 32 && rect.height <= 160;
+}
+
+function shouldUseSideWidgetPlacement(
+  anchorRect: DOMRect,
+  sourceRect: DOMRect,
+  isCompact: boolean
+): boolean {
+  if (isCompact) return false;
+  const host = location.hostname.toLowerCase();
+  if (!(host === "linkedin.com" || host.endsWith(".linkedin.com"))) {
+    return shouldPreferExpandedPresentation(anchorRect, sourceRect);
+  }
+
+  return (
+    anchorRect.height >= 220 &&
+    anchorRect.width >= 400 &&
+    anchorRect.height > sourceRect.height * 2
+  ) || shouldPreferExpandedPresentation(anchorRect, sourceRect);
+}
+
+function getActiveEditableSource(root: HTMLElement): HTMLElement | null {
+  const candidates: HTMLElement[] = [];
+  const activeElement = document.activeElement;
+  if (activeElement instanceof HTMLElement && root.contains(activeElement)) {
+    candidates.push(activeElement);
+  }
+
+  const selection = document.getSelection();
+  const selectionElement = selection?.focusNode?.parentElement;
+  if (selectionElement && root.contains(selectionElement)) {
+    candidates.push(selectionElement);
+  }
+
+  for (const candidate of candidates) {
+    const editable = findEditableCandidate(candidate, root);
+    if (editable) {
+      return editable;
+    }
+  }
+
+  return null;
+}
+
+function findEditableCandidate(start: HTMLElement, root: HTMLElement): HTMLElement | null {
+  let current: HTMLElement | null = start;
+  let depth = 0;
+
+  while (current && depth < 8) {
+    if (isRenderableEditableCandidate(current) && root.contains(current)) {
+      return current;
+    }
+    if (current === root) break;
+    current = current.parentElement;
+    depth += 1;
+  }
+
+  return null;
+}
+
+function isRenderableEditableCandidate(element: HTMLElement): boolean {
+  if (element instanceof HTMLTextAreaElement) return true;
+  if (element instanceof HTMLInputElement) return true;
+  if (element.isContentEditable) return true;
+  return (element.getAttribute("role") || "").toLowerCase() === "textbox";
+}
+
+function rectContainsRect(outer: DOMRect, inner: DOMRect, tolerance: number): boolean {
+  return (
+    inner.left >= outer.left - tolerance &&
+    inner.top >= outer.top - tolerance &&
+    inner.right <= outer.right + tolerance &&
+    inner.bottom <= outer.bottom + tolerance
+  );
+}
+
+function isRectViewportVisible(rect: DOMRect, padding: number = VIEWPORT_MARGIN): boolean {
+  return (
+    rect.right > padding &&
+    rect.left < window.innerWidth - padding &&
+    rect.bottom > padding &&
+    rect.top < window.innerHeight - padding
+  );
 }

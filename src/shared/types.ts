@@ -51,10 +51,12 @@ export interface UserSettings {
 export interface ElementState {
   lastText: string;
   pendingText: string | null;
+  pendingStartedAt: number | null;
   errors: GrammarError[];
   correctedText?: string;
   ignoredErrors: Set<string>;
   debounceTimer: number | null;
+  requestTimeoutTimer: number | null;
   focusOutTimer: number | null;
   checkGeneration: number;
   renderGeneration: number;

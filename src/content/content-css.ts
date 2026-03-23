@@ -251,7 +251,7 @@ export const CONTENT_CSS = `
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s ease;
+    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
     animation: grammar-fade-in 0.2s ease-out;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
@@ -331,10 +331,28 @@ export const CONTENT_CSS = `
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
   }
   .grammar-widget.grammar-widget--compact-dot {
+    width: 20px;
+    height: 20px;
+    border-width: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .grammar-widget.grammar-widget--compact-dot::before {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 4px;
     width: 12px;
     height: 12px;
-    border-width: 2px;
+    border-radius: 50%;
+    border: 2px solid #fff;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  }
+  .grammar-widget--ready.grammar-widget--compact-dot::before {
+    background: #2563eb;
+  }
+  .grammar-widget--errors.grammar-widget--compact-dot::before {
+    background: #e53e3e;
   }
   .grammar-widget--compact .grammar-widget__count {
     font-size: 9px;

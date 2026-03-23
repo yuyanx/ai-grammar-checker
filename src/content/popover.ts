@@ -275,7 +275,7 @@ export function applyFix(
         idx = value.length;
       }
     } else if (idx < 0 || value.substring(idx, idx + error.original.length) !== error.original) {
-      idx = value.indexOf(error.original);
+      idx = findNearestOccurrence(value, error.original, error.offset);
     }
     if (idx === -1) return;
 
@@ -319,11 +319,20 @@ export function applyFix(
         const textAfter = getContentEditableText(element);
         if (textAfter === textBefore) {
           console.log("[AI Grammar Checker] execCommand failed, using DOM fallback");
-          directDomReplace(element, error.original, error.suggestion, error.offset);
+          applyFixDirectly(element, error);
         }
       }, 100);
     }
   }
+}
+
+export function applyFixDirectly(
+  element: HTMLElement,
+  error: GrammarError
+): boolean {
+  trackAppliedFix(element, error.original, error.suggestion);
+  element.focus();
+  return directDomReplace(element, error.original, error.suggestion, error.offset);
 }
 
 /**
@@ -349,7 +358,7 @@ function setContentEditableSelection(
  * Walks text nodes, finds the error text, and replaces it.
  * Dispatches InputEvent to notify rich-text editors (Quill, etc.) of the change.
  */
-function directDomReplace(element: HTMLElement, original: string, replacement: string, offset: number = -1): void {
+function directDomReplace(element: HTMLElement, original: string, replacement: string, offset: number = -1): boolean {
   const snapshot = buildContentEditableSnapshot(element);
   const range = getContentEditableRangeForError(
     element,
@@ -363,7 +372,9 @@ function directDomReplace(element: HTMLElement, original: string, replacement: s
     },
     snapshot
   );
-  if (!range) return;
+  if (!range) return false;
+
+  const textBefore = snapshot.text;
 
   range.deleteContents();
   const textNode = document.createTextNode(replacement);
@@ -378,10 +389,59 @@ function directDomReplace(element: HTMLElement, original: string, replacement: s
     inputType: "insertText",
     data: replacement,
   }));
+
+  return getContentEditableText(element) !== textBefore;
 }
 
 export function escapeHtml(str: string): string {
   const div = document.createElement("div");
   div.textContent = str;
   return div.innerHTML;
+}
+
+function findNearestOccurrence(text: string, needle: string, preferredOffset: number): number {
+  const candidates: number[] = [];
+  let searchFrom = 0;
+  while (true) {
+    const foundIndex = text.indexOf(needle, searchFrom);
+    if (foundIndex < 0) break;
+    candidates.push(foundIndex);
+    searchFrom = foundIndex + 1;
+  }
+
+  if (candidates.length === 0) {
+    return -1;
+  }
+
+  const wordLike = /^[A-Za-z0-9']+$/.test(needle);
+  const wholeWordCandidates = wordLike
+    ? candidates.filter((index) => isWholeWordMatch(text, index, needle.length))
+    : candidates;
+  const usable = wholeWordCandidates.length > 0 ? wholeWordCandidates : candidates;
+
+  if (preferredOffset < 0) {
+    return usable[0];
+  }
+
+  let bestIndex = usable[0];
+  let bestDistance = Math.abs(bestIndex - preferredOffset);
+  for (const index of usable) {
+    const distance = Math.abs(index - preferredOffset);
+    if (distance < bestDistance) {
+      bestIndex = index;
+      bestDistance = distance;
+    }
+  }
+
+  return bestIndex;
+}
+
+function isWholeWordMatch(text: string, index: number, length: number): boolean {
+  const before = index > 0 ? text[index - 1] : "";
+  const after = index + length < text.length ? text[index + length] : "";
+  return !isWordChar(before) && !isWordChar(after);
+}
+
+function isWordChar(char: string): boolean {
+  return /[A-Za-z0-9']/.test(char);
 }

@@ -4,7 +4,14 @@ let shadowRoot: ShadowRoot | null = null;
 let shadowHost: HTMLElement | null = null;
 
 export function getShadowRoot(): ShadowRoot {
-  if (shadowRoot) return shadowRoot;
+  if (shadowRoot && shadowHost?.isConnected) return shadowRoot;
+
+  if (shadowHost && !shadowHost.isConnected) {
+    shadowHost = null;
+    shadowRoot = null;
+  }
+
+  removeStaleHosts();
 
   const host = document.createElement("div");
   host.id = "ai-grammar-checker-host";
@@ -34,4 +41,9 @@ export function getOrCreateContainer(id: string): HTMLElement {
     root.appendChild(container);
   }
   return container;
+}
+
+function removeStaleHosts(): void {
+  const staleHosts = document.querySelectorAll<HTMLElement>("#ai-grammar-checker-host");
+  staleHosts.forEach((host) => host.remove());
 }

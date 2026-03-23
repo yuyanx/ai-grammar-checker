@@ -1,7 +1,14 @@
 import { CheckRequest, CheckResponse, GrammarError, PrewarmRequest, PrewarmResponse } from "../shared/types.js";
 import { getSettings } from "../shared/storage.js";
 import { buildGrammarCheckPrompt, buildGrammarRecheckPrompt } from "../shared/prompts.js";
-import { parseOpenAIResponse, parseGeminiResponse, validateErrors, deriveErrorsFromCorrectedText, ParsedResponse } from "../shared/api-parsers.js";
+import {
+  parseOpenAIResponse,
+  parseGeminiResponse,
+  validateErrors,
+  deriveErrorsFromCorrectedText,
+  isDerivedError,
+  ParsedResponse,
+} from "../shared/api-parsers.js";
 import { OPENAI_API_URL, GEMINI_API_URL, DEFAULT_OPENAI_MODEL, MAX_TEXT_LENGTH, PROMPT_CACHE_VERSION } from "../shared/constants.js";
 import { findLocalPunctuationErrors, PUNCTUATION_RULES_VERSION } from "../shared/punctuation-rules.js";
 import { isLikelyEnglish } from "../shared/language-detect.js";
@@ -20,6 +27,10 @@ let cachedSettings: Awaited<ReturnType<typeof getSettings>> | null = null;
 let settingsCacheTime = 0;
 const SETTINGS_CACHE_TTL = 30_000; // 30 seconds
 
+chrome.runtime.onInstalled.addListener(async () => {
+  await reinjectContentScriptsIntoExistingTabs();
+});
+
 async function getCachedSettings() {
   if (cachedSettings && Date.now() - settingsCacheTime < SETTINGS_CACHE_TTL) {
     return cachedSettings;
@@ -27,6 +38,26 @@ async function getCachedSettings() {
   cachedSettings = await getSettings();
   settingsCacheTime = Date.now();
   return cachedSettings;
+}
+
+async function reinjectContentScriptsIntoExistingTabs(): Promise<void> {
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    if (!tab.id || !isInjectableTabUrl(tab.url)) continue;
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        files: ["content/index.js"],
+      });
+    } catch {
+      // Ignore restricted pages and transient tab races.
+    }
+  }
+}
+
+function isInjectableTabUrl(url?: string): boolean {
+  if (!url) return false;
+  return /^https?:\/\//i.test(url);
 }
 
 // Invalidate settings cache when settings change
@@ -168,6 +199,7 @@ async function handleCheckGrammar(
     };
   }
 
+  const localPunctuationErrors = settings.checkPunctuation ? findLocalPunctuationErrors(text) : [];
   const cacheKey = buildCacheKey(text, settings);
 
   // Check cache first
@@ -202,7 +234,8 @@ async function handleCheckGrammar(
     }
   }
 
-  errors = mergeLocalPunctuationErrors(errors, findLocalPunctuationErrors(text));
+  errors = filterDerivedErrorsForLocalPunctuation(errors, localPunctuationErrors);
+  errors = mergeLocalPunctuationErrors(errors, localPunctuationErrors);
   console.log("[AI Grammar Checker] Validated errors:", errors.length, JSON.stringify(errors));
 
   // Cache the unfiltered result
@@ -227,6 +260,8 @@ async function checkSingleText(
   settings: Awaited<ReturnType<typeof getSettings>>,
   signal?: AbortSignal
 ): Promise<{ parsed: ParsedResponse; errors: GrammarError[] }> {
+  const localPunctuationErrors = settings.checkPunctuation ? findLocalPunctuationErrors(text) : [];
+  const hasQuoteHeavyLocalPunctuation = hasQuoteRelatedLocalPunctuation(localPunctuationErrors);
   const prompt = buildGrammarCheckPrompt(text);
   let parsed = await callConfiguredProvider(
     settings,
@@ -238,12 +273,25 @@ async function checkSingleText(
   console.log("[AI Grammar Checker] Raw errors from API:", JSON.stringify(parsed.errors));
 
   let errors = validateErrors(parsed.errors, text);
-  if (errors.length === 0 && parsed.correctedText && parsed.correctedText !== text) {
-    errors = deriveErrorsFromCorrectedText(text, parsed.correctedText);
-    console.log("[AI Grammar Checker] Derived errors from correctedText:", errors.length, JSON.stringify(errors));
+  if (!hasQuoteHeavyLocalPunctuation && parsed.correctedText && parsed.correctedText !== text) {
+    const derivedErrors = deriveErrorsFromCorrectedText(text, parsed.correctedText);
+    if (errors.length === 0) {
+      errors = derivedErrors;
+      console.log("[AI Grammar Checker] Derived errors from correctedText:", errors.length, JSON.stringify(errors));
+    } else {
+      const supplementalErrors = mergeSupplementalDerivedErrors(errors, derivedErrors, localPunctuationErrors);
+      if (supplementalErrors.length !== errors.length) {
+        console.log(
+          "[AI Grammar Checker] Added supplemental derived errors:",
+          supplementalErrors.length - errors.length,
+          JSON.stringify(supplementalErrors.filter((error) => isDerivedError(error)))
+        );
+      }
+      errors = supplementalErrors;
+    }
   }
 
-  if (shouldRunHighRecallFallback(text, errors, parsed.correctedText)) {
+  if (localPunctuationErrors.length === 0 && shouldRunHighRecallFallback(text, errors, parsed.correctedText)) {
     console.log("[AI Grammar Checker] Running high-recall recheck fallback");
     const fallbackPrompt = buildGrammarRecheckPrompt(text);
     const fallbackParsed = await callConfiguredProvider(
@@ -253,7 +301,12 @@ async function checkSingleText(
       signal
     );
     let fallbackErrors = validateErrors(fallbackParsed.errors, text);
-    if (fallbackErrors.length === 0 && fallbackParsed.correctedText && fallbackParsed.correctedText !== text) {
+    if (
+      !hasQuoteHeavyLocalPunctuation &&
+      fallbackErrors.length === 0 &&
+      fallbackParsed.correctedText &&
+      fallbackParsed.correctedText !== text
+    ) {
       fallbackErrors = deriveErrorsFromCorrectedText(text, fallbackParsed.correctedText);
       console.log("[AI Grammar Checker] Derived fallback errors from correctedText:", fallbackErrors.length, JSON.stringify(fallbackErrors));
     }
@@ -539,6 +592,87 @@ function mergeLocalPunctuationErrors(
   }
 
   return merged.sort((a, b) => a.offset - b.offset);
+}
+
+function filterDerivedErrorsForLocalPunctuation(
+  apiErrors: GrammarError[],
+  localErrors: GrammarError[]
+): GrammarError[] {
+  if (!hasQuoteRelatedLocalPunctuation(localErrors)) {
+    return apiErrors;
+  }
+
+  return apiErrors.filter((error) => !isDerivedError(error));
+}
+
+function hasQuoteRelatedLocalPunctuation(errors: GrammarError[]): boolean {
+  return errors.some((error) =>
+    /quotation mark/i.test(error.explanation) || /["“”]/.test(`${error.original}${error.suggestion}`)
+  );
+}
+
+function mergeSupplementalDerivedErrors(
+  explicitErrors: GrammarError[],
+  derivedErrors: GrammarError[],
+  localErrors: GrammarError[]
+): GrammarError[] {
+  if (derivedErrors.length === 0) {
+    return explicitErrors;
+  }
+
+  const merged = [...explicitErrors];
+  for (const derivedError of derivedErrors) {
+    if (!isSafeSupplementalDerivedError(derivedError)) continue;
+    if (explicitErrors.some((error) => rangesOverlap(error, derivedError))) continue;
+    if (localErrors.some((error) => rangesOverlap(error, derivedError))) continue;
+    if (merged.some((error) => errorsEquivalent(error, derivedError))) continue;
+    merged.push(derivedError);
+  }
+
+  return merged.sort((a, b) => a.offset - b.offset);
+}
+
+function isSafeSupplementalDerivedError(error: GrammarError): boolean {
+  if (!isDerivedError(error)) {
+    return true;
+  }
+
+  const combined = `${error.original}${error.suggestion}`;
+  if (/["“”]/.test(combined)) {
+    return false;
+  }
+
+  if (error.type === "punctuation") {
+    return false;
+  }
+
+  if (/[.!?]/.test(combined)) {
+    return false;
+  }
+
+  const originalWords = error.original.match(/[A-Za-z0-9']+/g) || [];
+  const suggestionWords = error.suggestion.match(/[A-Za-z0-9']+/g) || [];
+  if (originalWords.length === 0 || suggestionWords.length === 0) {
+    return false;
+  }
+
+  if (originalWords.length > 2 || suggestionWords.length > 2) {
+    return false;
+  }
+
+  if (/[,:;]/.test(combined)) {
+    return false;
+  }
+
+  if (error.original.length > 24 || error.suggestion.length > 24) {
+    return false;
+  }
+
+  if (originalWords.length === 1 && suggestionWords.length === 1) {
+    return suggestionWords[0].length >= 2;
+  }
+
+  return true;
 }
 
 function rangesOverlap(a: GrammarError, b: GrammarError): boolean {

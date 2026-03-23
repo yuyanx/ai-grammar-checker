@@ -17,6 +17,7 @@ const PRIVACY_SKIP_AUTOCOMPLETE = /cc-|password|one-time-code/i;
 
 const UTILITY_TOKEN_RE = /\b(search|find|filter|branch|tag|repo|repository|command|palette|query|lookup|address|url|jump to|ask gmail)\b/i;
 const ASK_GMAIL_RE = /\bask gmail\b/i;
+const LINKEDIN_COMPOSE_RE = /\b(share your thoughts|start a post|create a post|post to anyone|post to|rewrite with ai|add to your post|add a comment|write a comment|reply to comment|comment as)\b/i;
 
 export function classifyEditor(element: HTMLElement): EditorClassification {
   if (isSensitiveField(element)) {
@@ -36,13 +37,7 @@ export function classifyEditor(element: HTMLElement): EditorClassification {
     };
   }
 
-  if (isUtilityPicker(element)) {
-    return {
-      eligible: false,
-      intent: "utility_picker",
-      reason: "combobox or picker UI detected",
-    };
-  }
+  const composeReason = getSiteSpecificComposeReason(element);
 
   if (isSiteSpecificDenied(element)) {
     return {
@@ -52,20 +47,27 @@ export function classifyEditor(element: HTMLElement): EditorClassification {
     };
   }
 
-  if (hasUtilitySearchIntent(element)) {
-    return {
-      eligible: false,
-      intent: "utility_search",
-      reason: "utility/search semantics detected",
-    };
-  }
-
-  const composeReason = getSiteSpecificComposeReason(element);
   if (composeReason) {
     return {
       eligible: true,
       intent: "compose",
       reason: composeReason,
+    };
+  }
+
+  if (isUtilityPicker(element)) {
+    return {
+      eligible: false,
+      intent: "utility_picker",
+      reason: "combobox or picker UI detected",
+    };
+  }
+
+  if (hasUtilitySearchIntent(element)) {
+    return {
+      eligible: false,
+      intent: "utility_search",
+      reason: "utility/search semantics detected",
     };
   }
 
@@ -166,7 +168,7 @@ function getSiteSpecificComposeReason(element: HTMLElement): string | null {
     return "grok chat composer";
   }
 
-  if (isLinkedInHost(host) && isGenericComposeSurface(element)) {
+  if (isLinkedInHost(host) && isLinkedInComposeSurface(element)) {
     return "linkedin compose surface";
   }
 
@@ -187,6 +189,27 @@ function isGmailComposeSurface(element: HTMLElement): boolean {
   if (ASK_GMAIL_RE.test(signals)) return false;
   if (/\bsearch mail|search in mail\b/i.test(signals)) return false;
   return true;
+}
+
+function isLinkedInComposeSurface(element: HTMLElement): boolean {
+  if (isGenericComposeSurface(element)) return true;
+
+  const role = (element.getAttribute("role") || "").toLowerCase();
+  const signals = getSemanticSignals(element).join(" ");
+  const hasComposeSignal =
+    hasAncestorComposeSignal(element, LINKEDIN_COMPOSE_RE) ||
+    hasDescendantComposeSignal(element, LINKEDIN_COMPOSE_RE);
+  const hasTextboxNearby = hasNearbyTextbox(element);
+  const inDialog = isDialogComposeSurface(element);
+
+  if (LINKEDIN_COMPOSE_RE.test(signals) || hasComposeSignal) {
+    return role === "textbox" || hasEditableDescendant(element) || hasTextboxNearby || inDialog;
+  }
+
+  return (
+    role === "textbox" &&
+    (hasEditableDescendant(element) || hasTextboxNearby || inDialog)
+  );
 }
 
 function isGenericComposeSurface(element: HTMLElement): boolean {
@@ -214,6 +237,7 @@ function getSemanticSignals(element: HTMLElement): string[] {
     pushSignal(signals, seen, current.getAttribute("aria-placeholder"));
     pushSignal(signals, seen, current.getAttribute("aria-roledescription"));
     pushSignal(signals, seen, current.getAttribute("placeholder"));
+    pushSignal(signals, seen, current.getAttribute("data-placeholder"));
     pushSignal(signals, seen, current.getAttribute("title"));
     pushSignal(signals, seen, current.getAttribute("name"));
     pushSignal(signals, seen, current.id);
@@ -223,6 +247,77 @@ function getSemanticSignals(element: HTMLElement): string[] {
   }
 
   return signals;
+}
+
+function hasEditableDescendant(element: HTMLElement): boolean {
+  return !!element.querySelector(
+    "[contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only'], textarea, [role='textbox']"
+  );
+}
+
+function isDialogComposeSurface(element: HTMLElement): boolean {
+  let current: HTMLElement | null = element;
+  let depth = 0;
+  while (current && depth < 4) {
+    const role = (current.getAttribute("role") || "").toLowerCase();
+    if (role === "dialog") return true;
+    current = current.parentElement;
+    depth += 1;
+  }
+  return false;
+}
+
+function hasAncestorComposeSignal(element: HTMLElement, pattern: RegExp): boolean {
+  let current: HTMLElement | null = element;
+  let depth = 0;
+  while (current && depth < 10) {
+    const signals = [
+      current.getAttribute("aria-label"),
+      current.getAttribute("aria-placeholder"),
+      current.getAttribute("placeholder"),
+      current.getAttribute("data-placeholder"),
+      current.getAttribute("title"),
+      current.getAttribute("data-testid"),
+      current.textContent,
+    ];
+    if (signals.some((value) => pattern.test((value || "").trim().toLowerCase()))) {
+      return true;
+    }
+    current = current.parentElement;
+    depth += 1;
+  }
+  return false;
+}
+
+function hasDescendantComposeSignal(element: HTMLElement, pattern: RegExp): boolean {
+  const descendants = element.querySelectorAll<HTMLElement>(
+    "[aria-label], [aria-placeholder], [placeholder], [data-placeholder], [title], [data-testid]"
+  );
+
+  for (const current of descendants) {
+    const signals = [
+      current.getAttribute("aria-label"),
+      current.getAttribute("aria-placeholder"),
+      current.getAttribute("placeholder"),
+      current.getAttribute("data-placeholder"),
+      current.getAttribute("title"),
+      current.getAttribute("data-testid"),
+      current.textContent,
+    ];
+    if (signals.some((value) => pattern.test((value || "").trim().toLowerCase()))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hasNearbyTextbox(element: HTMLElement): boolean {
+  const scope = element.parentElement;
+  if (!scope) return false;
+  return !!scope.querySelector(
+    "[contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only'], [role='textbox']"
+  );
 }
 
 function pushSignal(target: string[], seen: Set<string>, value: string | null): void {

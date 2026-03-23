@@ -255,24 +255,18 @@ async function applyAllFixes(
   if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
     element.focus();
 
-    // Use AI-provided correctedText if available, otherwise build from individual fixes
-    let value: string;
-    if (correctedText) {
-      value = correctedText;
-    } else {
-      const sorted = [...errors].sort((a, b) => b.offset - a.offset);
-      value = element.value;
-      for (const err of sorted) {
-        let idx = err.offset;
-        if (idx < 0 || value.substring(idx, idx + err.original.length) !== err.original) {
-          idx = value.indexOf(err.original);
-        }
-        if (idx === -1) continue;
-        const before = value.substring(0, idx);
-        const after = value.substring(idx + err.original.length);
-        value = before + err.suggestion + after;
-      }
-    }
+    const currentValue = element.value;
+    const surfacedValue = buildTextareaValueFromErrors(currentValue, errors);
+
+    // The panel's surfaced issues are the authoritative UI contract.
+    // correctedText can lag behind merged local/derived issues on follow-up checks,
+    // which makes Fix All look like a no-op on editors such as GitHub comments.
+    const value =
+      surfacedValue !== currentValue
+        ? surfacedValue
+        : correctedText && correctedText !== currentValue
+          ? correctedText
+          : currentValue;
 
     // Try execCommand for undo support: select all text, then insert corrected version
     element.setSelectionRange(0, element.value.length);
@@ -287,15 +281,103 @@ async function applyAllFixes(
     return;
   } else if (element.isContentEditable) {
     element.focus();
-    // Rich-text editors like X keep internal editor state separate from the
-    // visible DOM. Replacing the entire contenteditable value in one shot can
-    // leave the visible composer frozen while the real editor state keeps
-    // changing underneath. Applying fixes one-by-one preserves the editor's
-    // own mutation flow much more reliably.
-    console.log("[AI Grammar Checker] Fix All: using sequential fixes for contenteditable");
-    const sorted = [...errors].sort((a, b) => b.offset - a.offset);
+    const contentEditableText = getContentEditableText(element);
+    let sorted: GrammarError[] | null = null;
+
+    if (correctedText && correctedText !== contentEditableText) {
+      const canonicalFixes = buildCanonicalFixAllErrors(contentEditableText, correctedText);
+      if (canonicalFixes.length > 0) {
+        console.log(
+          "[AI Grammar Checker] Fix All: using canonical correctedText diff for contenteditable",
+          canonicalFixes.length
+        );
+        sorted = canonicalFixes.sort((a, b) => b.offset - a.offset);
+      }
+    }
+
+    if (!sorted) {
+      // Rich-text editors like X keep internal editor state separate from the
+      // visible DOM. Replacing the entire contenteditable value in one shot can
+      // leave the visible composer frozen while the real editor state keeps
+      // changing underneath. Applying fixes one-by-one preserves the editor's
+      // own mutation flow much more reliably.
+      console.log("[AI Grammar Checker] Fix All: using surfaced sequential fixes for contenteditable");
+      sorted = [...errors].sort((a, b) => b.offset - a.offset);
+    }
+
     await applyFixesSequentially(element, sorted, 0);
   }
+}
+
+function buildTextareaValueFromErrors(value: string, errors: GrammarError[]): string {
+  const sorted = [...errors].sort((a, b) => b.offset - a.offset);
+  let nextValue = value;
+
+  for (const err of sorted) {
+    let idx = err.offset;
+    if (err.length === 0) {
+      if (idx < 0 || idx > nextValue.length) {
+        idx = nextValue.length;
+      }
+    } else if (idx < 0 || nextValue.substring(idx, idx + err.original.length) !== err.original) {
+      idx = findNearestOccurrence(nextValue, err.original, err.offset);
+    }
+
+    if (idx === -1) continue;
+
+    const before = nextValue.substring(0, idx);
+    const after = nextValue.substring(idx + err.original.length);
+    nextValue = before + err.suggestion + after;
+  }
+
+  return nextValue;
+}
+
+function findNearestOccurrence(text: string, needle: string, preferredOffset: number): number {
+  const candidates: number[] = [];
+  let searchFrom = 0;
+  while (true) {
+    const foundIndex = text.indexOf(needle, searchFrom);
+    if (foundIndex < 0) break;
+    candidates.push(foundIndex);
+    searchFrom = foundIndex + 1;
+  }
+
+  if (candidates.length === 0) {
+    return -1;
+  }
+
+  const wordLike = /^[A-Za-z0-9']+$/.test(needle);
+  const wholeWordCandidates = wordLike
+    ? candidates.filter((index) => isWholeWordMatch(text, index, needle.length))
+    : candidates;
+  const usable = wholeWordCandidates.length > 0 ? wholeWordCandidates : candidates;
+
+  if (preferredOffset < 0) {
+    return usable[0];
+  }
+
+  let bestIndex = usable[0];
+  let bestDistance = Math.abs(bestIndex - preferredOffset);
+  for (const index of usable) {
+    const distance = Math.abs(index - preferredOffset);
+    if (distance < bestDistance) {
+      bestIndex = index;
+      bestDistance = distance;
+    }
+  }
+
+  return bestIndex;
+}
+
+function isWholeWordMatch(text: string, index: number, length: number): boolean {
+  const before = index > 0 ? text[index - 1] : "";
+  const after = index + length < text.length ? text[index + length] : "";
+  return !isWordChar(before) && !isWordChar(after);
+}
+
+function isWordChar(char: string): boolean {
+  return /[A-Za-z0-9']/.test(char);
 }
 
 /**
@@ -342,6 +424,253 @@ function waitForContentEditableFixSettle(
 
     setTimeout(poll, 30);
   });
+}
+
+interface DiffToken {
+  text: string;
+  start: number;
+  end: number;
+}
+
+function buildCanonicalFixAllErrors(
+  originalText: string,
+  correctedText: string
+): GrammarError[] {
+  if (!correctedText || correctedText === originalText) {
+    return [];
+  }
+
+  const originalTokens = tokenizeDiffTokens(originalText);
+  const correctedTokens = tokenizeDiffStrings(correctedText);
+  if (originalTokens.length === 0 || correctedTokens.length === 0) {
+    const edit = buildCanonicalDiffError(originalText, originalTokens, 0, originalTokens, correctedTokens);
+    return edit ? [edit] : [];
+  }
+
+  const lcs = buildTokenLcsMatrix(
+    originalTokens.map((token) => token.text),
+    correctedTokens
+  );
+
+  const edits: GrammarError[] = [];
+  let i = 0;
+  let j = 0;
+  const originalLength = originalTokens.length;
+  const correctedLength = correctedTokens.length;
+
+  while (i < originalLength || j < correctedLength) {
+    if (
+      i < originalLength &&
+      j < correctedLength &&
+      originalTokens[i].text === correctedTokens[j]
+    ) {
+      i++;
+      j++;
+      continue;
+    }
+
+    const startI = i;
+    const startJ = j;
+
+    while (i < originalLength || j < correctedLength) {
+      if (
+        i < originalLength &&
+        j < correctedLength &&
+        originalTokens[i].text === correctedTokens[j]
+      ) {
+        break;
+      }
+
+      if (i >= originalLength) {
+        j++;
+        continue;
+      }
+
+      if (j >= correctedLength) {
+        i++;
+        continue;
+      }
+
+      const skipOriginal = lcs[(i + 1) * (correctedLength + 1) + j];
+      const skipCorrected = lcs[i * (correctedLength + 1) + (j + 1)];
+      if (skipOriginal >= skipCorrected) {
+        i++;
+      } else {
+        j++;
+      }
+    }
+
+    const edit = buildCanonicalDiffError(
+      originalText,
+      originalTokens,
+      startI,
+      originalTokens.slice(startI, i),
+      correctedTokens.slice(startJ, j)
+    );
+    if (edit) {
+      edits.push(edit);
+    }
+  }
+
+  return edits.filter((edit) => edit.original !== edit.suggestion);
+}
+
+function tokenizeDiffTokens(text: string): DiffToken[] {
+  const regex = /\s+|[A-Za-z0-9']+|[^\sA-Za-z0-9']/g;
+  const tokens: DiffToken[] = [];
+  for (const match of text.matchAll(regex)) {
+    const token = match[0];
+    const start = match.index ?? 0;
+    tokens.push({
+      text: token,
+      start,
+      end: start + token.length,
+    });
+  }
+  return tokens;
+}
+
+function tokenizeDiffStrings(text: string): string[] {
+  return Array.from(text.match(/\s+|[A-Za-z0-9']+|[^\sA-Za-z0-9']/g) || []);
+}
+
+function buildTokenLcsMatrix(originalTokens: string[], correctedTokens: string[]): Uint32Array {
+  const columns = correctedTokens.length + 1;
+  const matrix = new Uint32Array((originalTokens.length + 1) * columns);
+
+  for (let i = originalTokens.length - 1; i >= 0; i--) {
+    for (let j = correctedTokens.length - 1; j >= 0; j--) {
+      const index = i * columns + j;
+      if (originalTokens[i] === correctedTokens[j]) {
+        matrix[index] = matrix[(i + 1) * columns + (j + 1)] + 1;
+      } else {
+        matrix[index] = Math.max(
+          matrix[(i + 1) * columns + j],
+          matrix[i * columns + (j + 1)]
+        );
+      }
+    }
+  }
+
+  return matrix;
+}
+
+function buildCanonicalDiffError(
+  originalText: string,
+  allOriginalTokens: DiffToken[],
+  insertionTokenIndex: number,
+  originalTokens: DiffToken[],
+  correctedTokens: string[]
+): GrammarError | null {
+  const suggestionText = correctedTokens.join("");
+
+  if (originalTokens.length === 0) {
+    const insertionOffset =
+      insertionTokenIndex < allOriginalTokens.length
+        ? allOriginalTokens[insertionTokenIndex].start
+        : originalText.length;
+    if (!suggestionText) {
+      return null;
+    }
+    return {
+      original: "",
+      suggestion: suggestionText,
+      offset: insertionOffset,
+      length: 0,
+      type: classifyCanonicalDiffType("", suggestionText),
+      explanation: "Derived from the corrected text returned by the AI.",
+    };
+  }
+
+  const offset = originalTokens[0].start;
+  const end = originalTokens[originalTokens.length - 1].end;
+  let original = originalText.slice(offset, end);
+  let suggestion = suggestionText;
+  let trimmedOffset = offset;
+
+  while (
+    original.length > 0 &&
+    suggestion.length > 0 &&
+    original[0] === suggestion[0]
+  ) {
+    original = original.slice(1);
+    suggestion = suggestion.slice(1);
+    trimmedOffset++;
+  }
+
+  while (
+    original.length > 0 &&
+    suggestion.length > 0 &&
+    original[original.length - 1] === suggestion[suggestion.length - 1]
+  ) {
+    original = original.slice(0, -1);
+    suggestion = suggestion.slice(0, -1);
+  }
+
+  if (!original && !suggestion) {
+    return null;
+  }
+
+  return {
+    original,
+    suggestion,
+    offset: trimmedOffset,
+    length: original.length,
+    type: classifyCanonicalDiffType(original, suggestion),
+    explanation: "Derived from the corrected text returned by the AI.",
+  };
+}
+
+function classifyCanonicalDiffType(
+  original: string,
+  suggestion: string
+): GrammarError["type"] {
+  const stripWordChars = (value: string) => value.replace(/[A-Za-z0-9\s]/g, "");
+  const lowerOriginal = original.toLowerCase();
+  const lowerSuggestion = suggestion.toLowerCase();
+
+  if (
+    lowerOriginal.replace(/[^\w]/g, "") === lowerSuggestion.replace(/[^\w]/g, "") &&
+    stripWordChars(original) !== stripWordChars(suggestion)
+  ) {
+    return "punctuation";
+  }
+
+  const originalWords = lowerOriginal.match(/[a-z0-9']+/g) || [];
+  const suggestionWords = lowerSuggestion.match(/[a-z0-9']+/g) || [];
+  if (
+    originalWords.length === suggestionWords.length &&
+    originalWords.length === 1 &&
+    originalWords[0] &&
+    suggestionWords[0] &&
+    editDistance(originalWords[0], suggestionWords[0]) <= 2
+  ) {
+    return "spelling";
+  }
+
+  return "grammar";
+}
+
+function editDistance(a: string, b: string): number {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const dp = Array.from({ length: rows }, () => new Array<number>(cols).fill(0));
+
+  for (let i = 0; i < rows; i++) dp[i][0] = i;
+  for (let j = 0; j < cols; j++) dp[0][j] = j;
+
+  for (let i = 1; i < rows; i++) {
+    for (let j = 1; j < cols; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+
+  return dp[a.length][b.length];
 }
 
 function animateRemoveItem(item: HTMLElement): void {

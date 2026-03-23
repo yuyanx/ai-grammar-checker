@@ -1,7 +1,7 @@
 import { GrammarError, CheckRequest, CheckResponse, ElementState, PrewarmResponse } from "../shared/types.js";
 import { getSettings, isConfigured } from "../shared/storage.js";
 import { renderErrors, clearErrors, clearAllErrors, errorKey } from "./underline-renderer.js";
-import { updateWidget, removeWidget, removeAllWidgets, refreshWidget, clearTransientWidgetsExcept } from "./status-widget.js";
+import { updateWidget, removeWidget, removeAllWidgets, refreshWidget, clearTransientWidgetsExcept, getWidgetState } from "./status-widget.js";
 import { showPopover } from "./popover.js";
 import { showErrorPanel, hideErrorPanel, getErrorPanelElement, isErrorPanelOpenForElement } from "./error-panel.js";
 import { getContentEditableText } from "./contenteditable-snapshot.js";
@@ -19,7 +19,15 @@ let lastUrl = location.href;
 let sourceCounter = 0;
 let backgroundPrewarmed = false;
 let backgroundPrewarmPromise: Promise<void> | null = null;
+let runtimeInvalidated = false;
+let maintenanceIntervalId: number | null = null;
+const linkedInComposeResolverTimers = new WeakMap<HTMLElement, number>();
+const linkedInComposeResolverObservers = new WeakMap<HTMLElement, MutationObserver>();
+const linkedInComposeResolverShells = new Set<HTMLElement>();
 const FOCUS_CHECK_DELAY_MS = 150;
+const CHECK_REQUEST_TIMEOUT_MS = 15000;
+const STALE_PENDING_THRESHOLD_MS = 20000;
+const LINKEDIN_COMPOSE_SIGNAL_RE = /\b(share your thoughts|start a post|create a post|post to anyone|post to|rewrite with ai|add to your post)\b/i;
 
 // Track recently applied fixes to prevent oscillation (suggestion reverting back to original)
 // Maps element → Set of "suggestion→original" pairs that should be suppressed
@@ -91,6 +99,15 @@ function isEditableElement(el: HTMLElement): boolean {
   if (el.isContentEditable) return true;
   // role="textbox" elements may be custom editors without explicit contenteditable
   if (el.getAttribute("role") === "textbox") return true;
+  if (looksLikeLinkedInComposeTextbox(el)) return true;
+  return false;
+}
+
+function isDirectlyEditableElement(el: HTMLElement): boolean {
+  if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) return true;
+  if (el.isContentEditable) return true;
+  if (el.getAttribute("spellcheck") === "true") return true;
+  if ((el.getAttribute("aria-multiline") || "").toLowerCase() === "true") return true;
   return false;
 }
 
@@ -99,42 +116,340 @@ function isEditableElement(el: HTMLElement): boolean {
  * Walks up the DOM to find the root editor element.
  */
 function findEditableRoot(target: HTMLElement): HTMLElement | null {
+  const host = location.hostname.toLowerCase();
+  const isLinkedIn = host === "linkedin.com" || host.endsWith(".linkedin.com");
+
+  // LinkedIn post compose frequently focuses a placeholder/modal shell before the
+  // real textbox exists or before the inner editable gets focus. Resolve that
+  // first so we do not attach to the wrong wrapper.
+  const linkedInComposeTextbox = findLinkedInComposeTextbox(target);
+  if (linkedInComposeTextbox) {
+    return linkedInComposeTextbox;
+  }
+
   // 1. Try matching our selectors directly (includes role=textbox)
-  const matched = target.closest<HTMLElement>(TEXT_INPUT_SELECTORS);
+  let matched = target.closest<HTMLElement>(TEXT_INPUT_SELECTORS);
   if (matched) {
-    // For contenteditable, walk up to find the outermost editable root
-    // so we attach to the editor container, not an inner <p> or <span>
-    if (matched.isContentEditable) {
-      let root = matched;
-      let parent = root.parentElement;
-      while (parent && parent !== document.body && parent.isContentEditable) {
-        if (parent.hasAttribute("contenteditable")) {
-          root = parent;
-        }
-        parent = parent.parentElement;
+    if (isLinkedIn && looksLikeLinkedInComposeTextbox(matched) && !isDirectlyEditableElement(matched)) {
+      const shell = findLinkedInComposeShell(matched) ?? matched;
+      const resolved = findLinkedInComposeTextboxInShell(shell);
+      if (resolved && resolved !== matched) {
+        return resolved;
       }
-      return root;
+      scheduleLinkedInComposeResolution(matched);
+      return null;
     }
     return matched;
   }
 
   // 2. Fallback: if target or ancestor is contenteditable but wasn't matched by selectors
   if (target.isContentEditable) {
-    let el: HTMLElement = target;
-    let parent = el.parentElement;
-    while (parent && parent !== document.body && parent.isContentEditable) {
-      if (parent.hasAttribute("contenteditable")) {
-        el = parent;
-      }
-      parent = parent.parentElement;
-    }
-    return el;
+    return target;
   }
 
   return null;
 }
 
+function findLinkedInComposeTextbox(target: HTMLElement): HTMLElement | null {
+  const host = location.hostname.toLowerCase();
+  if (!(host === "linkedin.com" || host.endsWith(".linkedin.com"))) {
+    return null;
+  }
+
+  const shell = findLinkedInComposeShell(target);
+  if (!shell) return null;
+  return findLinkedInComposeTextboxInShell(shell);
+}
+
+function findLinkedInComposeShell(target: HTMLElement): HTMLElement | null {
+  const dialog = target.closest<HTMLElement>("[role='dialog'], [aria-modal='true']");
+  if (dialog && looksLikeLinkedInComposeDialog(dialog)) {
+    return dialog;
+  }
+
+  let current: HTMLElement | null = target;
+  let depth = 0;
+
+  while (current && depth < 10) {
+    if (looksLikeLinkedInComposeDialog(current)) {
+      return current;
+    }
+
+    current = current.parentElement;
+    depth += 1;
+  }
+
+  return null;
+}
+
+function findLinkedInComposeTextboxInShell(shell: HTMLElement): HTMLElement | null {
+  const selectionTextbox = findLinkedInSelectionTextboxInShell(shell);
+  if (selectionTextbox) {
+    return selectionTextbox;
+  }
+
+  const candidates = Array.from(
+    shell.querySelectorAll<HTMLElement>(
+      "[contenteditable='true'], [contenteditable=''], [contenteditable='plaintext-only'], textarea, [role='textbox'], [spellcheck='true'], [aria-placeholder], [data-placeholder], [aria-multiline='true']"
+    )
+  ).filter((candidate) => {
+    if (!candidate.isConnected) return false;
+    const rect = candidate.getBoundingClientRect();
+    if (rect.width < 80 || rect.height < 18) return false;
+    const style = window.getComputedStyle(candidate);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    return isEditableElement(candidate) || looksLikeLinkedInComposeTextbox(candidate);
+  });
+
+  if (candidates.length === 0) return null;
+
+  const directlyEditableCandidates = candidates.filter(isDirectlyEditableElement);
+  const pool = directlyEditableCandidates.length > 0 ? directlyEditableCandidates : candidates;
+
+  pool.sort((a, b) => scoreLinkedInComposeTextbox(b, shell) - scoreLinkedInComposeTextbox(a, shell));
+  return pool[0] ?? null;
+}
+
+function findLinkedInSelectionTextboxInShell(shell: HTMLElement): HTMLElement | null {
+  const selection = document.getSelection();
+  const nodes = [selection?.anchorNode, selection?.focusNode];
+
+  for (const node of nodes) {
+    const start = node instanceof HTMLElement ? node : node?.parentElement;
+    if (!start || !shell.contains(start)) continue;
+
+    let current: HTMLElement | null = start;
+    let depth = 0;
+    while (current && current !== shell && depth < 8) {
+      if (
+        current.isContentEditable ||
+        (current.getAttribute("role") || "").toLowerCase() === "textbox" ||
+        current.getAttribute("spellcheck") === "true" ||
+        looksLikeLinkedInComposeTextbox(current)
+      ) {
+        const rect = current.getBoundingClientRect();
+        if (rect.width >= 40 && rect.height >= 16) {
+          return current;
+        }
+      }
+
+      current = current.parentElement;
+      depth += 1;
+    }
+  }
+
+  return null;
+}
+
+function scoreLinkedInComposeTextbox(candidate: HTMLElement, shell: HTMLElement): number {
+  const rect = candidate.getBoundingClientRect();
+  const shellRect = shell.getBoundingClientRect();
+  const role = (candidate.getAttribute("role") || "").toLowerCase();
+  const signals = [
+    candidate.getAttribute("aria-label"),
+    candidate.getAttribute("aria-placeholder"),
+    candidate.getAttribute("placeholder"),
+    candidate.getAttribute("data-placeholder"),
+    candidate.getAttribute("title"),
+    candidate.getAttribute("data-testid"),
+    candidate.textContent,
+  ].join(" ");
+  const signalScore = LINKEDIN_COMPOSE_SIGNAL_RE.test(signals.toLowerCase()) ? 400 : 0;
+  const multilineScore = (candidate.getAttribute("aria-multiline") || "").toLowerCase() === "true" ? 120 : 0;
+  const areaScore = Math.min(rect.width * rect.height, 500000) / 1000;
+  const roleScore = role === "textbox" ? 100 : 0;
+  const editableScore = candidate.isContentEditable ? 120 : 0;
+  const directEditableScore = isDirectlyEditableElement(candidate) ? 260 : -120;
+  const directChildScore = candidate.parentElement === shell ? 20 : 0;
+  const spellcheckScore = candidate.getAttribute("spellcheck") === "true" ? 10 : 0;
+  const widthScore = Math.min(rect.width, shellRect.width) / 8;
+  const heightScore = Math.min(rect.height, 320) / 6;
+  const upperPaneScore = rect.top < shellRect.top + shellRect.height * 0.72 ? 40 : -20;
+  return signalScore + multilineScore + areaScore + roleScore + editableScore + directEditableScore + directChildScore + spellcheckScore + widthScore + heightScore + upperPaneScore;
+}
+
+function scheduleLinkedInComposeResolution(target: HTMLElement, shouldPrime = false): boolean {
+  const shell = findLinkedInComposeShell(target);
+  if (!shell) return false;
+
+  const resolved = findLinkedInComposeTextboxInShell(shell);
+  if (resolved) {
+    ensureEditorTracking(resolved, shouldPrime);
+    return true;
+  }
+
+  if (linkedInComposeResolverShells.has(shell)) {
+    return true;
+  }
+
+  let attempts = 0;
+  const maxAttempts = 80;
+  linkedInComposeResolverShells.add(shell);
+
+  const clearResolver = () => {
+    const timer = linkedInComposeResolverTimers.get(shell);
+    if (typeof timer === "number") {
+      clearTimeout(timer);
+    }
+    linkedInComposeResolverTimers.delete(shell);
+
+    const observer = linkedInComposeResolverObservers.get(shell);
+    if (observer) {
+      observer.disconnect();
+    }
+    linkedInComposeResolverObservers.delete(shell);
+    linkedInComposeResolverShells.delete(shell);
+  };
+
+  const tick = () => {
+    linkedInComposeResolverTimers.delete(shell);
+
+    if (runtimeInvalidated || !enabled || !shell.isConnected) {
+      clearResolver();
+      return;
+    }
+
+    const textbox = findLinkedInComposeTextboxInShell(shell);
+    if (textbox) {
+      clearResolver();
+      ensureEditorTracking(textbox, shouldPrime);
+      return;
+    }
+
+    attempts += 1;
+    if (attempts >= maxAttempts) {
+      clearResolver();
+      return;
+    }
+
+    const timer = window.setTimeout(tick, 150);
+    linkedInComposeResolverTimers.set(shell, timer);
+  };
+
+  const observer = new MutationObserver(() => {
+    if (!shell.isConnected || runtimeInvalidated) {
+      clearResolver();
+      return;
+    }
+    const textbox = findLinkedInComposeTextboxInShell(shell);
+    if (textbox) {
+      clearResolver();
+      ensureEditorTracking(textbox, shouldPrime);
+    }
+  });
+  observer.observe(shell, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["contenteditable", "role", "aria-placeholder", "data-placeholder", "spellcheck", "aria-multiline"],
+  });
+  linkedInComposeResolverObservers.set(shell, observer);
+
+  const timer = window.setTimeout(tick, 0);
+  linkedInComposeResolverTimers.set(shell, timer);
+  return true;
+}
+
+function looksLikeLinkedInComposeDialog(element: HTMLElement): boolean {
+  const signals = [
+    element.getAttribute("aria-label"),
+    element.getAttribute("aria-placeholder"),
+    element.getAttribute("placeholder"),
+    element.getAttribute("data-placeholder"),
+    element.getAttribute("title"),
+    element.getAttribute("data-test-modal-id"),
+    element.getAttribute("data-view-name"),
+    element.textContent,
+  ].join(" ");
+
+  if (LINKEDIN_COMPOSE_SIGNAL_RE.test(signals.toLowerCase())) {
+    return true;
+  }
+
+  return Array.from(
+    element.querySelectorAll<HTMLElement>("[aria-label], [aria-placeholder], [placeholder], [data-placeholder], [title], [data-testid]")
+  ).some((descendant) => {
+    const descendantSignals = [
+      descendant.getAttribute("aria-label"),
+      descendant.getAttribute("aria-placeholder"),
+      descendant.getAttribute("placeholder"),
+      descendant.getAttribute("data-placeholder"),
+      descendant.getAttribute("title"),
+      descendant.getAttribute("data-testid"),
+      descendant.textContent,
+    ].join(" ");
+    return LINKEDIN_COMPOSE_SIGNAL_RE.test(descendantSignals.toLowerCase());
+  });
+}
+
+function looksLikeLinkedInComposeTextbox(element: HTMLElement): boolean {
+  const host = location.hostname.toLowerCase();
+  if (!(host === "linkedin.com" || host.endsWith(".linkedin.com"))) {
+    return false;
+  }
+
+  const rect = element.getBoundingClientRect();
+  if (rect.width < 140 || rect.height < 18) {
+    return false;
+  }
+
+  const signals = [
+    element.getAttribute("role"),
+    element.getAttribute("aria-label"),
+    element.getAttribute("aria-placeholder"),
+    element.getAttribute("placeholder"),
+    element.getAttribute("data-placeholder"),
+    element.getAttribute("title"),
+    element.textContent,
+  ].join(" ").toLowerCase();
+
+  if (LINKEDIN_COMPOSE_SIGNAL_RE.test(signals)) {
+    return true;
+  }
+
+  return (
+    element.getAttribute("spellcheck") === "true" &&
+    ((element.getAttribute("aria-multiline") || "").toLowerCase() === "true" ||
+      findLinkedInComposeShell(element) !== null)
+  );
+}
+
+function ensureEditorTracking(element: HTMLElement, shouldPrime = false): void {
+  const classification = classifyEditor(element);
+  logEditorClassification(element, classification);
+  if (!classification.eligible) {
+    deactivateElement(element);
+    return;
+  }
+
+  if (!elementStates.has(element)) {
+    if (collapseNestedTrackedEditors(element)) return;
+    attachListeners(element);
+    trackedElements.add(element);
+  }
+
+  const state = elementStates.get(element);
+  if (!state) return;
+  clearFocusOutTimer(state);
+  recoverElementIfStuck(element, true);
+  clearTransientWidgetsExcept(element);
+  void prewarmBackground();
+  if (shouldPrime) {
+    requestAnimationFrame(() => {
+      if (isElementActive(element)) {
+        primeElementOnFocus(element);
+      }
+    });
+  }
+}
+
 export async function startMonitoring(): Promise<void> {
+  runtimeInvalidated = false;
+  if (!isRuntimeAvailable()) {
+    handleRuntimeInvalidation("startup");
+    return;
+  }
+
   console.log("[AI Grammar Checker] startMonitoring called");
   const settings = await getSettings();
   debounceMs = settings.debounceMs;
@@ -175,43 +490,27 @@ export async function startMonitoring(): Promise<void> {
   // (e.g. LinkedIn's editor, Medium, Notion). When the user clicks into a field,
   // we check if it's a text input we should attach to.
   document.addEventListener("focusin", (e) => {
-    if (!enabled) return;
+    if (runtimeInvalidated || !enabled) return;
+    if (!isRuntimeAvailable()) {
+      handleRuntimeInvalidation("focusin");
+      return;
+    }
     const target = e.target;
     if (!(target instanceof HTMLElement)) return;
 
     const el = findEditableRoot(target);
-    if (!el) return;
-
-    const classification = classifyEditor(el);
-    logEditorClassification(el, classification);
-    if (!classification.eligible) {
-      deactivateElement(el);
+    if (!el) {
+      scheduleLinkedInComposeResolution(target, true);
       return;
     }
-
-    if (!elementStates.has(el)) {
-      console.log(
-        "[AI Grammar Checker] focusin detected compose editor:",
-        el.tagName,
-        el.className,
-        el.getAttribute("contenteditable"),
-        el.getAttribute("role")
-      );
-      attachListeners(el);
-      trackedElements.add(el);
-    }
-
-    if (elementStates.has(el)) {
-      const state = elementStates.get(el);
-      if (state) clearFocusOutTimer(state);
-      clearTransientWidgetsExcept(el);
-      void prewarmBackground();
-      requestAnimationFrame(() => {
-        if (isElementActive(el)) {
-          primeElementOnFocus(el);
-        }
-      });
-    }
+    console.log(
+      "[AI Grammar Checker] focusin detected compose editor:",
+      el.tagName,
+      el.className,
+      el.getAttribute("contenteditable"),
+      el.getAttribute("role")
+    );
+    ensureEditorTracking(el, true);
   }, true);
 
   // Recalculate underline positions on scroll/resize
@@ -228,10 +527,40 @@ export async function startMonitoring(): Promise<void> {
   };
 
   window.addEventListener("scroll", recalculate, true);
+  document.addEventListener("scroll", recalculate, true);
   window.addEventListener("resize", recalculate);
+  window.visualViewport?.addEventListener("scroll", recalculate);
+  window.visualViewport?.addEventListener("resize", recalculate);
+  document.addEventListener("selectionchange", () => {
+    if (runtimeInvalidated || !enabled) return;
+    const host = location.hostname.toLowerCase();
+    if (!(host === "linkedin.com" || host.endsWith(".linkedin.com"))) return;
+
+    const selection = document.getSelection();
+    const target = selection?.focusNode instanceof HTMLElement
+      ? selection.focusNode
+      : selection?.focusNode?.parentElement;
+    if (target instanceof HTMLElement) {
+      scheduleLinkedInComposeResolution(target, true);
+    }
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      recoverVisiblePendingChecks();
+    }
+  });
+  window.addEventListener("pageshow", () => {
+    recoverVisiblePendingChecks();
+  });
 
   // Periodic maintenance: cleanup + rescan for missed editors
-  setInterval(() => {
+  maintenanceIntervalId = window.setInterval(() => {
+    if (runtimeInvalidated) return;
+    if (!isRuntimeAvailable()) {
+      handleRuntimeInvalidation("maintenance");
+      return;
+    }
+
     // Detect URL change (SPA navigation) — nuclear cleanup
     if (location.href !== lastUrl) {
       lastUrl = location.href;
@@ -264,6 +593,10 @@ export async function startMonitoring(): Promise<void> {
     }
 
     clearTransientWidgetsExcept(getActiveTrackedElement() ?? getErrorPanelElement());
+    recoverVisiblePendingChecks(true);
+    for (const el of trackedElements) {
+      recoverElementIfStuck(el);
+    }
 
     // Periodic rescan: catch editors that might have been missed by MutationObserver/focusin.
     // This is a safety net for complex SPAs (LinkedIn, etc.) where editors are created
@@ -291,22 +624,67 @@ export async function startMonitoring(): Promise<void> {
 }
 
 function scanForElements(root: HTMLElement): void {
-  const elements: HTMLElement[] = root.matches?.(TEXT_INPUT_SELECTORS) ? [root] : [];
-  root.querySelectorAll<HTMLElement>(TEXT_INPUT_SELECTORS).forEach((el) => elements.push(el));
+  if (runtimeInvalidated) return;
+  const candidates: HTMLElement[] = root.matches?.(TEXT_INPUT_SELECTORS) ? [root] : [];
+  root.querySelectorAll<HTMLElement>(TEXT_INPUT_SELECTORS).forEach((el) => candidates.push(el));
+  addSiteSpecificEditorCandidates(root, candidates);
 
   // Traverse into shadow roots to find inputs inside web components
-  walkShadowRoots(root, elements);
+  walkShadowRoots(root, candidates);
 
-  for (const el of elements) {
+  const elements = new Set<HTMLElement>();
+  for (const candidate of candidates) {
+    const editableRoot = findEditableRoot(candidate);
+    if (editableRoot) {
+      elements.add(editableRoot);
+      continue;
+    }
+    scheduleLinkedInComposeResolution(candidate);
+  }
+
+  const sortedElements = Array.from(elements).sort((a, b) => getElementDepth(b) - getElementDepth(a));
+
+  for (const el of sortedElements) {
     if (el instanceof HTMLElement && !elementStates.has(el)) {
       // Skip non-editable elements (e.g. role=textbox that isn't actually editable)
       if (!isEditableElement(el)) continue;
+      if (collapseNestedTrackedEditors(el)) continue;
       const classification = classifyEditor(el);
       logEditorClassification(el, classification);
       if (!classification.eligible) continue;
       attachListeners(el);
       trackedElements.add(el);
     }
+  }
+}
+
+function addSiteSpecificEditorCandidates(root: HTMLElement, candidates: HTMLElement[]): void {
+  const host = location.hostname.toLowerCase();
+  if (!(host === "linkedin.com" || host.endsWith(".linkedin.com"))) {
+    return;
+  }
+
+  const seen = new Set<HTMLElement>(candidates);
+  const elements = root.matches?.("*") ? [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))] : Array.from(root.querySelectorAll<HTMLElement>("*"));
+
+  for (const element of elements) {
+    if (seen.has(element)) continue;
+    if (!looksLikeLinkedInComposeDialog(element) && !looksLikeLinkedInComposeTextbox(element)) {
+      const signals = [
+        element.getAttribute("aria-label"),
+        element.getAttribute("aria-placeholder"),
+        element.getAttribute("placeholder"),
+        element.getAttribute("data-placeholder"),
+        element.getAttribute("title"),
+        element.getAttribute("data-testid"),
+        element.textContent,
+      ];
+      if (!signals.some((value) => LINKEDIN_COMPOSE_SIGNAL_RE.test((value || "").trim().toLowerCase()))) {
+        continue;
+      }
+    }
+    candidates.push(element);
+    seen.add(element);
   }
 }
 
@@ -329,9 +707,11 @@ function attachListeners(element: HTMLElement): void {
   const state: ElementState = {
     lastText: "",
     pendingText: null,
+    pendingStartedAt: null,
     errors: [],
     ignoredErrors: new Set(),
     debounceTimer: null,
+    requestTimeoutTimer: null,
     focusOutTimer: null,
     checkGeneration: 0,
     renderGeneration: 0,
@@ -341,7 +721,11 @@ function attachListeners(element: HTMLElement): void {
   elementStates.set(element, state);
 
   const handler = () => {
-    if (!enabled) return;
+    if (runtimeInvalidated || !enabled) return;
+    if (!isRuntimeAvailable()) {
+      handleRuntimeInvalidation("element handler");
+      return;
+    }
 
     const currentState = elementStates.get(element);
     if (!currentState) return;
@@ -462,6 +846,10 @@ function attachListeners(element: HTMLElement): void {
 }
 
 async function prewarmBackground(): Promise<void> {
+  if (runtimeInvalidated || !isRuntimeAvailable()) {
+    handleRuntimeInvalidation("prewarm");
+    return;
+  }
   if (backgroundPrewarmed) return;
   if (backgroundPrewarmPromise) return backgroundPrewarmPromise;
 
@@ -472,7 +860,11 @@ async function prewarmBackground(): Promise<void> {
       }
       backgroundPrewarmed = true;
     })
-    .catch(() => {
+    .catch((err) => {
+      if (isRuntimeInvalidationError(err)) {
+        handleRuntimeInvalidation(err);
+        return;
+      }
       // Ignore prewarm failures — normal checks will still work.
     })
     .finally(() => {
@@ -507,7 +899,15 @@ function primeElementOnFocus(element: HTMLElement): void {
     return;
   }
 
-  if (text === state.lastText || text === state.pendingText) return;
+  if (text === state.lastText) return;
+  if (text === state.pendingText) {
+    if (isPendingRequestStale(state)) {
+      console.warn("[AI Grammar Checker] Clearing stale pending check on focus");
+      invalidatePendingRequest(state, text);
+    } else {
+      return;
+    }
+  }
 
   updateWidget(element, "checking");
   if (state.debounceTimer !== null) {
@@ -519,6 +919,11 @@ function primeElementOnFocus(element: HTMLElement): void {
 }
 
 async function checkElement(element: HTMLElement, autoShowPanel = false, retryCount = 0): Promise<void> {
+  if (runtimeInvalidated || !isRuntimeAvailable()) {
+    handleRuntimeInvalidation("checkElement");
+    return;
+  }
+
   if (configuredCache === null) configuredCache = await isConfigured();
   if (!configuredCache) {
     console.log("[AI Grammar Checker] API key not configured, skipping check");
@@ -555,10 +960,20 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
 
   // Skip unchanged text (normalized comparison to avoid spurious rechecks
   // from contenteditable editors that add/remove trailing whitespace)
-  if (text === state.lastText || text === state.pendingText) return;
+  if (text === state.lastText) return;
+  if (text === state.pendingText) {
+    if (isPendingRequestStale(state)) {
+      console.warn("[AI Grammar Checker] Clearing stale pending check before new check");
+      invalidatePendingRequest(state, text);
+    } else {
+      return;
+    }
+  }
 
   state.pendingText = text;
+  state.pendingStartedAt = Date.now();
   const checkGeneration = ++state.checkGeneration;
+  clearRequestTimeout(state);
 
   // Show checking widget
   console.log("[AI Grammar Checker] Checking text:", text.substring(0, 50) + (text.length > 50 ? "..." : ""));
@@ -574,15 +989,35 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
       sourceId: state.sourceId,
     };
 
+    state.requestTimeoutTimer = window.setTimeout(() => {
+      const latestState = elementStates.get(element);
+      if (!latestState || latestState.checkGeneration !== checkGeneration) {
+        return;
+      }
+      console.warn("[AI Grammar Checker] Check request timed out, recovering pending state");
+      invalidatePendingRequest(latestState, text);
+      updateWidget(element, "error");
+      if (normalizeText(getElementText(element)) === text) {
+        setTimeout(() => {
+          const retryState = elementStates.get(element);
+          if (!retryState) return;
+          if (normalizeText(getElementText(element)) !== text) return;
+          checkElement(element, autoShowPanel, Math.min(retryCount + 1, 1));
+        }, 300);
+      }
+    }, CHECK_REQUEST_TIMEOUT_MS);
+
     const response: CheckResponse = await chrome.runtime.sendMessage(request);
     const latestState = elementStates.get(element);
     if (!latestState || latestState.checkGeneration !== checkGeneration) {
       return;
     }
+    clearRequestTimeout(latestState);
 
     if (response.error) {
       if (latestState.pendingText === text) {
         latestState.pendingText = null;
+        latestState.pendingStartedAt = null;
       }
       const isRateLimit = response.error.includes("Rate limit") || response.rateLimitedUntil;
       if (!isRateLimit && retryCount < 1) {
@@ -609,6 +1044,7 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
     if (currentText !== text) {
       if (latestState.pendingText === text) {
         latestState.pendingText = null;
+        latestState.pendingStartedAt = null;
       }
       console.log("[AI Grammar Checker] Text changed during check, discarding result");
       if (latestState.debounceTimer === null) {
@@ -620,6 +1056,7 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
     latestState.lastText = text;
     if (latestState.pendingText === text) {
       latestState.pendingText = null;
+      latestState.pendingStartedAt = null;
     }
 
     // Filter out errors that would reverse a recently applied fix (prevents oscillation)
@@ -652,10 +1089,15 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
     if (!latestState || latestState.checkGeneration !== checkGeneration) {
       return;
     }
+    clearRequestTimeout(latestState);
     if (latestState.pendingText === text) {
       latestState.pendingText = null;
+      latestState.pendingStartedAt = null;
     }
-    if (err?.message?.includes("Extension context invalidated")) return;
+    if (isRuntimeInvalidationError(err) || !isRuntimeAvailable()) {
+      handleRuntimeInvalidation(err);
+      return;
+    }
     if (retryCount < 1) {
       console.warn("[AI Grammar Checker] Error, retrying in 2s:", err);
       updateWidget(element, "error");
@@ -670,6 +1112,68 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
       updateWidget(element, "idle");
     }
   }
+}
+
+function isRuntimeAvailable(): boolean {
+  try {
+    return typeof chrome !== "undefined" && Boolean(chrome.runtime?.id);
+  } catch {
+    return false;
+  }
+}
+
+function isRuntimeInvalidationError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  return (
+    message.includes("Extension context invalidated") ||
+    message.includes("Extension context was invalidated") ||
+    message.includes("Receiving end does not exist")
+  );
+}
+
+function handleRuntimeInvalidation(reason?: unknown): void {
+  if (runtimeInvalidated) return;
+
+  runtimeInvalidated = true;
+  backgroundPrewarmed = false;
+  backgroundPrewarmPromise = null;
+  configuredCache = false;
+  console.warn("[AI Grammar Checker] Runtime invalidated; refresh tab to restore checking", reason);
+
+  if (maintenanceIntervalId !== null) {
+    clearInterval(maintenanceIntervalId);
+    maintenanceIntervalId = null;
+  }
+
+  for (const shell of Array.from(linkedInComposeResolverShells)) {
+    const timer = linkedInComposeResolverTimers.get(shell);
+    if (typeof timer === "number") {
+      clearTimeout(timer);
+    }
+    linkedInComposeResolverTimers.delete(shell);
+    const observer = linkedInComposeResolverObservers.get(shell);
+    if (observer) {
+      observer.disconnect();
+    }
+    linkedInComposeResolverObservers.delete(shell);
+    linkedInComposeResolverShells.delete(shell);
+  }
+
+  for (const element of trackedElements) {
+    const state = elementStates.get(element);
+    if (state) {
+      state.pendingText = null;
+      state.pendingStartedAt = null;
+      state.lastText = "";
+      state.errors = [];
+      cleanupElementState(element);
+    }
+    clearErrors(element);
+    removeWidget(element);
+  }
+
+  trackedElements.clear();
+  removeAllWidgets();
 }
 
 function getSourceId(element: HTMLElement): string {
@@ -699,12 +1203,108 @@ function clearPendingCheck(state: ElementState): void {
     clearTimeout(state.debounceTimer);
     state.debounceTimer = null;
   }
+  clearRequestTimeout(state);
 }
 
 function clearFocusOutTimer(state: ElementState): void {
   if (state.focusOutTimer !== null) {
     clearTimeout(state.focusOutTimer);
     state.focusOutTimer = null;
+  }
+}
+
+function clearRequestTimeout(state: ElementState): void {
+  if (state.requestTimeoutTimer !== null) {
+    clearTimeout(state.requestTimeoutTimer);
+    state.requestTimeoutTimer = null;
+  }
+}
+
+function invalidatePendingRequest(state: ElementState, pendingText?: string): void {
+  clearRequestTimeout(state);
+  if (!pendingText || state.pendingText === pendingText) {
+    state.pendingText = null;
+    state.pendingStartedAt = null;
+  }
+  state.checkGeneration += 1;
+}
+
+function recoverVisiblePendingChecks(onlyStale = false): void {
+  for (const element of trackedElements) {
+    if (!element.isConnected) continue;
+    const state = elementStates.get(element);
+    if (!state || !state.pendingText) continue;
+    if (onlyStale && !isPendingRequestStale(state)) continue;
+
+    const currentText = normalizeText(getElementText(element));
+    if (currentText !== state.pendingText) {
+      invalidatePendingRequest(state);
+      if (isElementActive(element)) {
+        updateWidget(element, currentText.trim().length >= 10 ? "ready" : "idle");
+      } else {
+        updateWidget(element, "idle");
+      }
+      continue;
+    }
+
+    console.warn("[AI Grammar Checker] Recovering stale pending check after tab became visible");
+    invalidatePendingRequest(state, currentText);
+    if (currentText.trim().length >= 10) {
+      void checkElement(element);
+    } else if (isElementActive(element)) {
+      updateWidget(element, "ready");
+    } else {
+      updateWidget(element, "idle");
+    }
+  }
+}
+
+function isPendingRequestStale(state: ElementState): boolean {
+  return state.pendingStartedAt !== null && Date.now() - state.pendingStartedAt >= STALE_PENDING_THRESHOLD_MS;
+}
+
+function recoverElementIfStuck(element: HTMLElement, forceRecheck = false): void {
+  const state = elementStates.get(element);
+  if (!state) return;
+  if (getWidgetState(element) !== "checking") return;
+
+  if (state.pendingText) {
+    if (isPendingRequestStale(state)) {
+      console.warn("[AI Grammar Checker] Recovering stale checking widget with pending text");
+      const pendingText = state.pendingText;
+      invalidatePendingRequest(state, pendingText);
+      if (normalizeText(getElementText(element)) === pendingText && pendingText.trim().length >= 10) {
+        void checkElement(element);
+      } else if (isElementActive(element)) {
+        updateWidget(element, "ready");
+      } else {
+        updateWidget(element, "idle");
+      }
+    }
+    return;
+  }
+
+  const currentText = normalizeText(getElementText(element));
+  const visibleErrors = state.errors.filter(
+    (e) => !state.ignoredErrors.has(errorKey(e))
+  );
+
+  console.warn("[AI Grammar Checker] Recovering desynced checking widget without pending request");
+  if (visibleErrors.length > 0) {
+    updateWidget(element, "errors", visibleErrors.length, () => {
+      openErrorPanelForElement(element);
+    });
+    return;
+  }
+
+  if (!currentText.trim() || currentText.trim().length < 10) {
+    updateWidget(element, isElementActive(element) ? "ready" : "idle");
+    return;
+  }
+
+  updateWidget(element, isElementActive(element) ? "ready" : "idle");
+  if (forceRecheck || isElementActive(element)) {
+    void checkElement(element);
   }
 }
 
@@ -725,6 +1325,30 @@ function deactivateElement(element: HTMLElement): void {
   cleanupElementState(element);
   trackedElements.delete(element);
   elementStates.delete(element);
+}
+
+function collapseNestedTrackedEditors(root: HTMLElement): boolean {
+  for (const tracked of Array.from(trackedElements)) {
+    if (tracked === root) continue;
+    if (tracked.contains(root)) {
+      deactivateElement(tracked);
+      continue;
+    }
+    if (root.contains(tracked)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getElementDepth(element: HTMLElement): number {
+  let depth = 0;
+  let current: HTMLElement | null = element;
+  while (current) {
+    depth += 1;
+    current = current.parentElement;
+  }
+  return depth;
 }
 
 function getActiveTrackedElement(): HTMLElement | null {

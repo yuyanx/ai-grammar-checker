@@ -192,7 +192,50 @@ export function resolveContentEditableErrorOffset(
     return Math.min(Math.max(error.offset, 0), snapshot.text.length);
   }
 
-  return snapshot.text.indexOf(error.original);
+  const candidates: number[] = [];
+  let searchFrom = 0;
+  while (true) {
+    const foundIndex = snapshot.text.indexOf(error.original, searchFrom);
+    if (foundIndex < 0) break;
+    candidates.push(foundIndex);
+    searchFrom = foundIndex + 1;
+  }
+
+  if (candidates.length === 0) {
+    return -1;
+  }
+
+  const wordLike = /^[A-Za-z0-9']+$/.test(error.original);
+  const scopedCandidates = wordLike
+    ? candidates.filter((index) => isWholeWordMatch(snapshot.text, index, error.original.length))
+    : candidates;
+  const usableCandidates = scopedCandidates.length > 0 ? scopedCandidates : candidates;
+
+  if (error.offset < 0) {
+    return usableCandidates[0];
+  }
+
+  let bestIndex = usableCandidates[0];
+  let bestDistance = Math.abs(bestIndex - error.offset);
+  for (const index of usableCandidates) {
+    const distance = Math.abs(index - error.offset);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  }
+
+  return bestIndex;
+}
+
+function isWholeWordMatch(text: string, index: number, length: number): boolean {
+  const before = index > 0 ? text[index - 1] : "";
+  const after = index + length < text.length ? text[index + length] : "";
+  return !isWordChar(before) && !isWordChar(after);
+}
+
+function isWordChar(char: string): boolean {
+  return /[A-Za-z0-9']/.test(char);
 }
 
 export function getContentEditableRangeForError(

@@ -1,5 +1,183 @@
 # Changelog
 
+## v1.12.31
+
+### Bug Fixes
+- Keep wide chat and email composers eligible for the stable compact control-row slot even after the editor grows taller, so Gmail and ChatGPT-style reply bars stop flipping from the inline-right-safe dot to overlapping large badges near the send button
+- Align compact control-row detection with the same wide-composer eligibility rule, so row/chat badge placement remains stable as the composer height changes while typing
+
+## v1.12.30
+
+### Bug Fixes
+- Keep row/chat composer badges on one stable control-row slot across ready, checking, and error states, so ChatGPT-style composer bars stop jumping onto the send button or moving above it as the composer height changes
+- Use the actual focused editable strip for widget visibility and add stronger scroll/viewport refresh handling, so ready/checking badges on GitHub, X, and similar composers move with the editor and hide once the real input strip scrolls offscreen
+
+## v1.12.29
+
+### Bug Fixes
+- Use the actual focused editable rect for widget visibility while letting large composers climb to a larger expanded anchor, so GitHub/X-style composers stay attached instead of falling into the compact outside-left fallback and stale badges hide once the real input strip scrolls offscreen
+- Give inline comment/chat bars one stable compact slot anchored to the row itself instead of the live text line, so compact badges stop reallocating vertically or jumping between placements as the status changes
+
+## v1.12.28
+
+### Bug Fixes
+- Hide the widget when the actual focused input line scrolls out of the viewport, so ready/checking badges on GitHub and X composers no longer stay pinned on the page after the editor itself has scrolled away
+- Keep large multi-row composers on a stable expanded/side placement instead of forcing the compact outside-left fallback, so GitHub-style and X-style ask/compose surfaces stay attached to the editor instead of jumping to the far left edge
+
+## v1.12.27
+
+### Bug Fixes
+- Keep compact comment/chat badges on one stable reserved slot across ready/checking/error states, so Instagram and Grok row composers stop jumping between inside and outside positions or switching allocation when the status changes
+- Align compact row/bar badges vertically to the actual focused editable strip instead of the larger wrapper midpoint, so multi-row prompt bars like Grok image composers stay tied to the text row while still avoiding control clusters
+
+## v1.12.26
+
+### Bug Fixes
+- Add a selection-aware LinkedIn post-composer resolver and broaden LinkedIn compose-shell discovery, so the main share-post modal can attach after its real rich-text node appears instead of staying completely inactive
+- Make compact badge anchoring use the actual row geometry and fall back relative to that row, so narrow comment/chat composers keep the badge inline-right-safe instead of drifting to a larger wrapper or page edge
+
+## v1.12.25
+
+### Bug Fixes
+- Use the actual focused editable node for text/obstacle detection while anchoring compact badges to the visible composer row, so narrow LinkedIn and Grok editors no longer inherit far-left or control-overlapping badge placement from the wrong geometry source
+- Allow large LinkedIn compose dialogs to expand to a right-side modal anchor, so the main post composer can render a visible badge instead of disappearing when the inner textbox itself is too small to anchor
+
+## v1.12.24
+
+### Bug Fixes
+- Scan LinkedIn share-post wrapper nodes for compose intent and resolve them to the inner textbox, so the main post composer can activate even when LinkedIn exposes the placeholder shell before the editable node itself
+
+## v1.12.23
+
+### Bug Fixes
+- Resolve LinkedIn share-post wrapper focus targets down to their inner compose textbox, so the main post composer can activate even when focus lands on the placeholder shell instead of the editable node
+
+## v1.12.22
+
+### Bug Fixes
+- Anchor widget geometry to the real focused editable sub-element instead of always using the tracked outer editor root, so LinkedIn and Grok composers stop inheriting badge placement from the wrong visual box
+- Keep compact badge fallback placement close to the actual editor and stop expanding tiny editors to giant modal/page containers, so Grok no longer throws the blue dot far left and LinkedIn compact composers stay tied to the visible input row
+
+## v1.12.21
+
+### Bug Fixes
+- Prefer the innermost actual editable surface over outer wrapper roots when tracking rich composers, so LinkedIn and Grok stop pinning widgets to the wrong ancestor and can activate the real editor instead of a stale outer shell
+
+## v1.12.20
+
+### Bug Fixes
+- Let LinkedIn compose surfaces inherit compose intent from descendant and wrapper placeholders, so the main post composer no longer gets excluded when the visible "Share your thoughts" signal is not attached directly to the focused textbox node
+- Make compact badge anchoring prefer the nearest composer row with controls instead of the widest ancestor, so LinkedIn comment and Grok home badges stay tied to the actual editor row instead of drifting into overlapping or far-left positions
+
+## v1.12.19
+
+### Bug Fixes
+- Canonicalize nested editable fragments down to one tracked editor root, so rich composers such as LinkedIn and Grok no longer miss activation or leave duplicate stale widgets attached to different fragments of the same editor
+- Resolve textarea and input fixes against the nearest matching occurrence instead of the first repeated word, so follow-up `Fix All` passes on GitHub-style editors stop applying corrections to the wrong repeated token
+- Relax compact composer anchor selection so the blue badge can anchor to fuller control rows and stay clear of LinkedIn and Grok right-side action areas
+
+## v1.12.18
+
+### Bug Fixes
+- Build the extension into a temporary directory and swap it into `dist/` only after the bundle is complete, so Chrome no longer sees a half-built unpacked extension and reports a bogus manifest-read failure during reload
+
+## v1.12.17
+
+### Bug Fixes
+- Broaden LinkedIn compose-surface detection so the share-post dialog still activates when its placeholder lives in site-specific attributes or wrapper structures instead of the editable node itself
+- Prefer compact anchors that include same-row sibling controls and relax compact anchor sizing thresholds, so compact badges stay clear of LinkedIn comment actions and Grok's right-side composer controls
+
+## v1.12.16
+
+### Bug Fixes
+- Let supported site-specific compose surfaces such as LinkedIn's share-post editor override generic picker/search heuristics, so the main post composer is no longer accidentally excluded from grammar checking
+- Treat interactive controls embedded inside compact composer roots as widget obstacles, so compact blue badges no longer sit on top of LinkedIn comment action buttons or Grok's right-side composer controls
+
+## v1.12.15
+
+### Bug Fixes
+- Remove stale extension shadow hosts before a reinjected content script starts, so dead grey checking widgets from an invalidated old script do not linger alongside the fresh widget
+- Make textarea Fix All prioritize the currently surfaced issue list over stale `correctedText`, so follow-up Fix All clicks on GitHub comment and Copilot-style editors no longer become no-ops after the first pass
+
+## v1.12.14
+
+### Bug Fixes
+- Detect stale tabs whose old content script lost its extension runtime, clear the dead grey checking widget, and re-inject the current content script into existing tabs after an extension reload/update so old pages no longer depend on a manual refresh to recover
+
+## v1.12.13
+
+### Bug Fixes
+- Add a stale pending-check recovery guard on focus and periodic maintenance, so old tabs recover from stuck grey checking states even when the normal visibility restore path is missed
+
+## v1.12.12
+
+### Bug Fixes
+- Recover from stuck backgrounded checks by timing out hung content-script grammar requests and retrying them when the tab becomes visible again, so the grey checking badge no longer spins forever until a manual refresh
+
+## v1.12.11
+
+### Bug Fixes
+- Reject coordinated-phrase noun-number changes such as `my friend and I` -> `my friends and I` in the derived corrected-text fallback path, so that bad fallback suggestion no longer leaks through as a spelling issue
+
+## v1.12.10
+
+### Bug Fixes
+- Collapse competing explicit suggestions for the same exact text span down to one surfaced issue before rendering, so inflated counts and conflicting `Fix All` edits stop fighting over the same word
+- Reject bogus grammar-number suggestions inside coordinated phrases like `my friend and I`, so bad model edits such as `friend` → `friends` no longer surface
+
+## v1.12.9
+
+### Bug Fixes
+- Reject redundant explicit quote-closing and punctuation-appending suggestions when the same boundary characters already exist just outside the matched span, so bogus fixes like `leave.` → `leave."` no longer surface after the quote is already present
+- Tighten the grammar-check prompt so the model stops suggesting quote-closing or punctuation additions when those boundary characters already exist immediately outside the selected span
+
+## v1.12.8
+
+### Bug Fixes
+- Make contenteditable `Fix All` derive and apply one canonical non-overlapping edit set from the AI's `correctedText`, instead of replaying every overlapping surfaced issue one by one
+- Stop contenteditable fallback matching from jumping to the first repeated word occurrence, so short fixes like `one` no longer drift into earlier words such as `none`
+
+## v1.12.7
+
+### Bug Fixes
+- Reject explicit grammar suggestions that try to capitalize a mid-sentence word and add an introductory comma, so nonsense edits like `so` → `So,` no longer surface inside phrases such as `I wasn't so sure`
+
+## v1.12.6
+
+### Bug Fixes
+- Restore contenteditable `Fix All` batching to the same `applyFix()` path used by individual Accept actions, instead of forcing tiny punctuation edits through direct DOM replacement first
+- Stop the latest `Fix All` regression where simple punctuation-only batches could silently fail or keep resurfacing the same tiny issues even though accepting them one-by-one still worked
+
+## v1.12.5
+
+### Bug Fixes
+- Stop quote-spacing punctuation rules from treating closing quotes like opening quotes, so `Fix All` no longer removes the valid space in patterns like `one" but` and reintroduces the same quote issues on the next check
+- Apply tiny contenteditable punctuation fixes through the deterministic DOM replacement path during `Fix All`, so quote-boundary edits do not get skipped by the selection/execCommand path and reappear on the next check
+- Detect malformed closing quote punctuation clusters like `pay"."` and `leave."."` as one canonical local punctuation fix per boundary, instead of letting them pass undetected or break into competing micro-fixes
+
+## v1.12.4
+
+### Bug Fixes
+- Stop quote-spacing punctuation rules from treating closing quotes like opening quotes, so `Fix All` no longer removes the valid space in patterns like `one" but` and reintroduces the same quote issues on the next check
+- Apply tiny contenteditable punctuation fixes through the deterministic DOM replacement path during `Fix All`, so quote-boundary edits do not get skipped by the selection/execCommand path and reappear on the next check
+
+## v1.12.3
+
+### Bug Fixes
+- Restore the 1.12.1 contenteditable Fix All behavior for normal grammar-heavy drafts while keeping the blue badge scroll-position fix
+- Detect quote-heavy punctuation mistakes such as repeated quotation marks and missing spaces before opening quotes without letting corrected-text fallback explode them into unrelated grammar/spelling cascades
+
+## v1.12.2
+
+### Bug Fixes
+- Suspend contenteditable checks while Fix All is applying sequential edits and run one clean validation pass after the batch settles, so normal grammar corrections stop cascading across multiple passes
+- Resolve repeated-word contenteditable ranges against the nearest matching occurrence instead of the first occurrence, so Fix All targets the intended span more reliably
+
+## v1.12.1
+
+### Bug Fixes
+- Stop animating scroll-driven widget top/left position updates so the blue ready badge stays visually fixed to the editor instead of lagging while the page scrolls
+
 ## v1.12.0
 
 ### Features
