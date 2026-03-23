@@ -271,13 +271,10 @@ async function checkSingleText(
   );
 
   console.log("[AI Grammar Checker] Raw errors from API:", JSON.stringify(parsed.errors));
-  console.log("[AI Grammar Checker] correctedText:", parsed.correctedText);
 
   let errors = validateErrors(parsed.errors, text);
-  console.log("[AI Grammar Checker] After validateErrors:", errors.length, "(dropped:", parsed.errors.length - errors.length, ")", JSON.stringify(errors));
   if (!hasQuoteHeavyLocalPunctuation && parsed.correctedText && parsed.correctedText !== text) {
     const derivedErrors = deriveErrorsFromCorrectedText(text, parsed.correctedText);
-    console.log("[AI Grammar Checker] Raw derived errors:", derivedErrors.length, JSON.stringify(derivedErrors));
     if (errors.length === 0) {
       errors = derivedErrors;
       console.log("[AI Grammar Checker] Derived errors from correctedText:", errors.length, JSON.stringify(errors));

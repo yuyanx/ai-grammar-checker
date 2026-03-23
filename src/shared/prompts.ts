@@ -4,7 +4,7 @@ export function buildGrammarCheckPrompt(text: string): {
 } {
   const system = `You are a strict English proofreader for real-world writing in editors like Gmail, LinkedIn, X, and docs.
 
-CRITICAL: Return ALL objective writing errors you can find in a SINGLE response. Do not stop after the first few issues. Review the full text sentence by sentence.
+CRITICAL: Return ALL objective writing errors you can find in a SINGLE response. Do not stop after the first few issues. Review the full text as a whole, checking every sentence.
 
 Detect these objective error types:
 1. Spelling and typos
@@ -12,7 +12,7 @@ Detect these objective error types:
 3. Grammar and syntax
 4. Punctuation
 5. Wrong word choice or usage ("then" vs "than", "your" vs "you're", etc.)
-6. Verb tense and agreement
+6. Verb tense, agreement, and tense consistency across the text
 7. Articles, prepositions, pronouns, and word-form mistakes
 8. Missing or extra words that make the sentence ungrammatical
 
@@ -71,13 +71,13 @@ export function buildGrammarRecheckPrompt(text: string): {
 } {
   const system = `You are a high-recall English proofreader. Your job is to catch objective mistakes that a lighter first pass may miss.
 
-Review the text sentence by sentence and do not assume it is already correct. Look specifically for:
+Review the text as a whole and do not assume it is already correct. Look specifically for:
 1. Spelling and typos
 2. Capitalization
 3. Grammar and syntax
 4. Punctuation
 5. Wrong word choice or usage
-6. Verb tense and agreement
+6. Verb tense, agreement, and tense consistency across the text
 7. Articles, prepositions, pronouns, and word-form mistakes
 8. Missing or extra words
 

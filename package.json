@@ -1,6 +1,6 @@
 {
   "name": "ai-grammar-checker",
-  "version": "1.12.37",
+  "version": "1.12.38",
   "description": "Grammarly-like Chrome extension using your own OpenAI or Gemini API keys",
   "scripts": {
     "build": "bash build.sh",
