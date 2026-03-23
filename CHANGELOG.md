@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.12.33
+
+### Bug Fixes
+- Downgrade "Runtime invalidated" and "Recovering desynced checking widget" from console warnings to log-level messages so the console doesn't fill with yellow noise after reloading the extension
+
 ## v1.12.32
 
 ### Improvements

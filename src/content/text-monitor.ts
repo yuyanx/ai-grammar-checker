@@ -1138,7 +1138,7 @@ function handleRuntimeInvalidation(reason?: unknown): void {
   backgroundPrewarmed = false;
   backgroundPrewarmPromise = null;
   configuredCache = false;
-  console.warn("[AI Grammar Checker] Runtime invalidated; refresh tab to restore checking", reason);
+  console.log("[AI Grammar Checker] Runtime invalidated; refresh tab to restore checking", reason);
 
   if (maintenanceIntervalId !== null) {
     clearInterval(maintenanceIntervalId);
@@ -1289,7 +1289,7 @@ function recoverElementIfStuck(element: HTMLElement, forceRecheck = false): void
     (e) => !state.ignoredErrors.has(errorKey(e))
   );
 
-  console.warn("[AI Grammar Checker] Recovering desynced checking widget without pending request");
+  console.log("[AI Grammar Checker] Recovering desynced checking widget without pending request");
   if (visibleErrors.length > 0) {
     updateWidget(element, "errors", visibleErrors.length, () => {
       openErrorPanelForElement(element);
