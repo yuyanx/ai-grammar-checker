@@ -44,9 +44,10 @@ Important areas:
 - `src/shared/api-parsers.ts`: parser normalization and corrected-text-derived fallback
 - `src/shared/prompts.ts`: model instructions and detection behavior
 - `src/shared/punctuation-rules.ts`: deterministic local punctuation detection
+- `src/shared/grammar-rules.ts`: deterministic local grammar detection (modal parallel structure, `isVerbProtectedByModal`, `filterModalProtectedErrors`)
 - `src/shared/language-detect.ts`: English-only language gating
 
-### Current State (v1.12.35)
+### Current State (v1.12.49)
 
 Implemented:
 
@@ -62,6 +63,11 @@ Implemented:
 - Badge states: ready, checking, errors, clean, transient warning
 - Corrected-text fallback and merge logic
 - Coordinated phrase protection, quote boundary validation, reverse fix suppression
+- Deterministic modal parallel structure detection: catches conjugated verbs after modals (v1.12.41) and filters oscillating AI suggestions via `filterModalProtectedErrors` (v1.12.43)
+- `isVerbProtectedByModal` now protects coordinated verbs even when the modal-adjacent verb is conjugated (v1.12.45)
+- Grammar prompt includes tense consistency examples for past-tense (v1.12.46) and present-tense narratives (v1.12.47), plus dominant-tense rule
+- Grammar prompt includes quantifier-noun number agreement detection (v1.12.48)
+- Fix All for contenteditable uses stepwise inline fallback per fix with verification (v1.12.49)
 
 Known issues still open:
 

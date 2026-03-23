@@ -1,5 +1,76 @@
 # Changelog
 
+## v1.12.49
+
+### Bug Fixes
+- Refactor `applyFixesSequentially` in Fix All to handle each contenteditable fix inline with stepwise fallback: execCommand → MAIN world postMessage → direct DOM manipulation, each with an 80ms settle wait and text-change verification
+- Always use the surfaced (displayed) errors for Fix All on contenteditable instead of the canonical `correctedText` diff, which could include extra fixes beyond what's in the panel and produce coarse edits that fail on ProseMirror-based editors like ChatGPT
+
+## v1.12.48
+
+### Improvements
+- Add rule #9 to both grammar check and recheck prompts: quantifiers like "some", "several", "many", "few", "these", "those" require plural nouns (e.g. "some part" → "some parts")
+- Bump prompt cache version to invalidate stale cached responses
+
+## v1.12.47
+
+### Improvements
+- Add Example 4 (present-tense narrative) to the grammar prompt showing "learned" → "learns" when the dominant tense is present (brings, reads, feels)
+- Strengthen tense consistency rule to "First determine the dominant tense, then make ALL corrections consistent with that tense — do not mix past and present"
+- Apply strengthened rule to the recheck prompt too
+
+## v1.12.46
+
+### Improvements
+- Add Example 3 (tense consistency) to the grammar check prompt showing "doesn't know" → "didn't know" when surrounding narrative is past tense (jumped, tried)
+- Add tense consistency rule to recheck prompt: flag tense outliers without forcing all text to past tense
+
+## v1.12.45
+
+### Bug Fixes
+- Fix `isVerbProtectedByModal` in `grammar-rules.ts` to protect verbs in a modal phrase context even when the verb immediately after the modal is conjugated (e.g. "might relates ... and need") — previously the function skipped the entire modal match, leaving coordinated base-form verbs unprotected
+
+## v1.12.44
+
+### Bug Fixes
+- Remove the local tense-hint injection from the grammar check prompt — it caused false positives by forcing verbs in mixed-tense texts (e.g. habitual present + past narrative) to all become past tense
+
+## v1.12.43
+
+### Bug Fixes
+- Add `filterModalProtectedErrors` post-processing step to strip AI suggestions that add an "-s" ending to verbs in a modal phrase context (e.g. "might relate and need" → API wrongly suggests "needs"), preventing oscillation between base-form and conjugated form
+
+## v1.12.42
+
+### Internal
+- Add diagnostic logging to grammar-rules pipeline for `findLocalGrammarErrors`, `mergeLocalGrammarErrors`, and `filterModalProtectedErrors` to trace modal detection in the service worker console
+
+## v1.12.41
+
+### Improvements
+- Add deterministic `findLocalGrammarErrors` for modal parallel structure: detects conjugated verbs immediately after modals (e.g. "might relates") and coordinated base-form violations (e.g. "might relate and needs")
+- Add `mergeLocalGrammarErrors` and `filterModalProtectedErrors` to the `handleCheckGrammar` pipeline
+
+## v1.12.40
+
+### Improvements
+- Add modal parallel structure rule to the grammar check prompt with a few-shot example ("might relate ... and needs" → "might relate ... and need")
+
+## v1.12.39
+
+### Improvements
+- Add local tense detection that scans the text for dominant narrative tense and injects a hint into the grammar prompt so the model aligns verb suggestions with the surrounding context
+
+## v1.12.38
+
+### Improvements
+- Add cross-sentence tense consistency detection to the grammar check prompt, guiding the model to flag verbs that break the established narrative tense
+
+## v1.12.37
+
+### Internal
+- Add diagnostic logging to `validateErrors` and the derived-error pipeline in the service worker to trace error counts through each stage
+
 ## v1.12.36
 
 ### Fixes

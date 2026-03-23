@@ -10,16 +10,18 @@ npm run build
 Load `dist/` as unpacked extension in Chrome.
 
 ## Current State
-- Current package/manifest version: `1.12.31`
-- `npm run build` passes locally
+- Current package/manifest version: `1.12.49`
 - Error panel feature complete: clicking the red badge opens a panel listing all errors with Fix/Dismiss per error and Fix All
 - Automatic single retry on transient API failures with visible orange "!" widget feedback
 - Editor-intent classifier gates activation to compose surfaces only; search bars, pickers, and utility inputs are suppressed
 - Deterministic local punctuation rules catch obvious malformed patterns without an API call
+- Deterministic modal parallel structure detection catches conjugated verbs after modals and coordinated base-form violations
 - English-only gating suppresses non-English text before provider requests
 - Parallel chunk checks (concurrency=2) with per-chunk caching (5-minute TTL)
-- Stable compact/full badge placement across Gmail, LinkedIn, Grok, X, Instagram, GitHub composers
+- Stable compact/full badge placement across Gmail, LinkedIn, Grok, X, Instagram, GitHub, ChatGPT composers
 - Scroll-locked badge positioning without animation lag
+- Prompt includes few-shot examples for tense consistency (past and present narratives) and quantifier-noun agreement
+- Fix All for contenteditable now uses stepwise fallback per fix (execCommand → MAIN world → DOM) with inline verification
 
 ## Key Milestones
 1. **v1.9.0** — Deterministic punctuation rules (`punctuation-rules.ts`), English-only gating (`language-detect.ts`)
@@ -28,6 +30,9 @@ Load `dist/` as unpacked extension in Chrome.
 4. **v1.12.0** — Editor-intent classifier (`editor-classifier.ts`): limits activation to compose surfaces, suppresses search/utility/picker fields
 5. **v1.12.1** — Scroll-locked badge positioning (removed position animation from widget transitions)
 6. **v1.12.2–v1.12.31** — Contenteditable Fix All refinements, LinkedIn/Grok/Instagram/GitHub badge placement stability, compact control-row anchoring for chat and email composers
+7. **v1.12.41–v1.12.43** — Deterministic modal parallel structure detection in `grammar-rules.ts`; `filterModalProtectedErrors` prevents AI from oscillating base-form verbs after modals
+8. **v1.12.45–v1.12.48** — Grammar prompt improvements: tense consistency examples (past + present), quantifier-noun agreement rule, corrected modal protection for conjugated-verb context
+9. **v1.12.49** — Fix All contenteditable refactored: inline stepwise fallback per fix, always uses surfaced errors not canonical diff
 
 ## Architecture
 
