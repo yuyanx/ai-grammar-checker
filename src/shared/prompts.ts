@@ -50,6 +50,13 @@ Output: {"correctedText": "My friend kept saying, \"This one looks better than t
   {"original": "one", "suggestion": "one.\"", "offset": 61, "length": 3, "type": "punctuation", "explanation": "Add closing punctuation and quotation mark."}
 ]}
 
+Example 3 (tense consistency)
+Input: "The cat jumped on the table and tried to eat some food. It doesn't know it is not allowed to be there."
+Output: {"correctedText": "The cat jumped on the table and tried to eat some food. It didn't know it was not allowed to be there.", "errors": [
+  {"original": "doesn't", "suggestion": "didn't", "offset": 57, "length": 7, "type": "grammar", "explanation": "Use past tense 'didn't' to match the narrative tense (jumped, tried)."},
+  {"original": "is", "suggestion": "was", "offset": 72, "length": 2, "type": "grammar", "explanation": "Use past tense 'was' to match the narrative tense."}
+]}
+
 Rules:
 - text.substring(offset, offset + length) MUST exactly equal "original".
 - For missing punctuation at the end of the text, use the last word as "original" and append the punctuation in "suggestion".
@@ -57,6 +64,7 @@ Rules:
 - Only fix genuine errors. Do not alter meaning, tone, or style.
 - Do NOT hallucinate errors.
 - Each correction MUST be consistent with all other corrections. correctedText must be correct as a whole.
+- When most verbs in a passage share one tense, flag the outliers that break consistency. Do not force all text to past tense — only correct genuine tense inconsistencies within the same narrative context.
 - If no errors, return {"correctedText": "<the original text>", "errors": []}.
 - Output ONLY the JSON object.`;
 
@@ -96,6 +104,7 @@ Return ONLY a JSON object: {"correctedText": "...", "errors": [...]}
 Rules:
 - text.substring(offset, offset + length) MUST exactly equal "original".
 - Prefer many small objective fixes over missing obvious errors.
+- When most verbs in a passage share one tense, flag the outliers that break consistency. Do not force all text to past tense — only correct genuine tense inconsistencies within the same narrative context.
 - If the text truly has no errors, return {"correctedText": "<the original text>", "errors": []}.
 - Output ONLY the JSON object.`;
 
