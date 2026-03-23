@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.13.4
+
+### Bug Fixes
+- Increase check request timeout from 15s to 30s to accommodate Gemini 2.5 Flash which is slower than Flash Lite
+- Downgrade timeout warning to console.log to avoid noise in the extensions error page
+
 ## v1.13.3
 
 ### Bug Fixes

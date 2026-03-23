@@ -46,7 +46,7 @@ Important areas:
 - `src/shared/punctuation-rules.ts`: deterministic local punctuation detection
 - `src/shared/language-detect.ts`: English-only language gating
 
-### Current State (v1.13.3)
+### Current State (v1.13.4)
 
 Implemented:
 
