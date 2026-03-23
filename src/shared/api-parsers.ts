@@ -113,10 +113,12 @@ export function validateErrors(
     const normalizedType = normalizeErrorType(err.type);
 
     if (!err.suggestion || !normalizedType) {
+      console.log("[validateErrors] DROPPED (no suggestion/type):", JSON.stringify(err));
       continue;
     }
 
     if (typeof err.original !== "string" || err.original === err.suggestion) {
+      console.log("[validateErrors] DROPPED (original===suggestion):", JSON.stringify(err));
       continue;
     }
 
@@ -143,7 +145,10 @@ export function validateErrors(
     }
 
     const offset = findBestErrorOffset(originalText, err.original, err.suggestion, rawOffset);
-    if (offset < 0) continue;
+    if (offset < 0) {
+      console.log("[validateErrors] DROPPED (offset not found):", JSON.stringify(err));
+      continue;
+    }
 
     const suggestion = normalizeSuggestionAgainstContext(
       originalText,
@@ -152,6 +157,7 @@ export function validateErrors(
       offset
     );
     if (!suggestion || err.original === suggestion) {
+      console.log("[validateErrors] DROPPED (suggestion normalized to original):", JSON.stringify(err), "→", suggestion);
       continue;
     }
 
@@ -161,6 +167,7 @@ export function validateErrors(
     };
 
     if (isContextuallyInvalidExplicitError(normalizedError, originalText, offset, normalizedType)) {
+      console.log("[validateErrors] DROPPED (contextually invalid):", JSON.stringify(err));
       continue;
     }
 
@@ -169,6 +176,7 @@ export function validateErrors(
       suggestion.length > err.original.length &&
       originalText.substring(offset, offset + suggestion.length) === suggestion
     ) {
+      console.log("[validateErrors] DROPPED (already applied):", JSON.stringify(err));
       continue;
     }
 
@@ -561,12 +569,17 @@ export function deriveErrorsFromCorrectedText(
     if (tail) derived.push(tail);
   }
 
-  return filterUnsafeDerivedErrors(
-    filterUnstableDerivedPunctuation(
-      mergeAdjacentDerivedErrors(derived, originalText)
-    ),
-    originalText
-  );
+  const merged = mergeAdjacentDerivedErrors(derived, originalText);
+  console.log("[deriveErrors] Before filtering:", merged.length, JSON.stringify(merged));
+  const afterPunctFilter = filterUnstableDerivedPunctuation(merged);
+  if (afterPunctFilter.length !== merged.length) {
+    console.log("[deriveErrors] filterUnstableDerivedPunctuation dropped:", merged.length - afterPunctFilter.length);
+  }
+  const afterUnsafeFilter = filterUnsafeDerivedErrors(afterPunctFilter, originalText);
+  if (afterUnsafeFilter.length !== afterPunctFilter.length) {
+    console.log("[deriveErrors] filterUnsafeDerivedErrors dropped:", afterPunctFilter.length - afterUnsafeFilter.length);
+  }
+  return afterUnsafeFilter;
 }
 
 function normalizeErrorType(rawType: unknown): GrammarError["type"] | null {
