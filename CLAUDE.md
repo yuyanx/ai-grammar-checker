@@ -47,7 +47,7 @@ Important areas:
 - `src/shared/grammar-rules.ts`: deterministic local grammar detection (modal parallel structure, `isVerbProtectedByModal`, `filterModalProtectedErrors`)
 - `src/shared/language-detect.ts`: English-only language gating
 
-### Current State (v1.12.54)
+### Current State (v1.12.55)
 
 Implemented:
 
@@ -71,6 +71,7 @@ Implemented:
 - Chunked corrected text is now rebuilt from the validated error list instead of concatenating chunk outputs, eliminating boundary artifacts like duplicated words (v1.12.52)
 - Chunks now include surrounding sentence context in the prompt, helping the AI understand boundary text and catch cross-sentence agreement errors like "was"→"were" (v1.12.53)
 - Deterministic compound subject agreement rule: "X and Y, which was" → "were" catches cases the AI misses (v1.12.54)
+- Added targeted tense consistency instruction to prompt: when correcting verb forms, keep all corrections in the same tense (v1.12.55)
 
 Known issues still open:
 

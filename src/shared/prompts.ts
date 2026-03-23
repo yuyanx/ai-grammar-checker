@@ -57,6 +57,7 @@ Rules:
 - Only fix genuine errors. Do not alter meaning, tone, or style.
 - Do NOT hallucinate errors.
 - Each correction MUST be consistent with all other corrections. correctedText must be correct as a whole.
+- When correcting verb forms, keep all corrections in the same tense. If most verbs in the text use present tense, correct other verbs to present tense too (e.g. "learn" → "learns", not "learned"). Do not introduce tense shifts that are not in the original.
 - If no errors, return {"correctedText": "<the original text>", "errors": []}.
 - Output ONLY the JSON object.`;
 
