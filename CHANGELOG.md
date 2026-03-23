@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.13.5
+
+### Bug Fixes
+- Revert model from gemini-2.5-flash back to gemini-2.5-flash-lite — Flash offered no detection improvement without thinking mode but was slower and more expensive
+- Revert check request timeout from 30s back to 15s to match Flash Lite's faster response time
+
 ## v1.13.4
 
 ### Bug Fixes

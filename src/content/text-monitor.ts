@@ -25,7 +25,7 @@ const linkedInComposeResolverTimers = new WeakMap<HTMLElement, number>();
 const linkedInComposeResolverObservers = new WeakMap<HTMLElement, MutationObserver>();
 const linkedInComposeResolverShells = new Set<HTMLElement>();
 const FOCUS_CHECK_DELAY_MS = 150;
-const CHECK_REQUEST_TIMEOUT_MS = 30000;
+const CHECK_REQUEST_TIMEOUT_MS = 15000;
 const STALE_PENDING_THRESHOLD_MS = 20000;
 const LINKEDIN_COMPOSE_SIGNAL_RE = /\b(share your thoughts|start a post|create a post|post to anyone|post to|rewrite with ai|add to your post)\b/i;
 
