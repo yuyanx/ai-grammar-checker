@@ -203,6 +203,7 @@ async function handleCheckGrammar(
 
   const localPunctuationErrors = settings.checkPunctuation ? findLocalPunctuationErrors(text) : [];
   const localGrammarErrors = settings.checkGrammar ? findLocalGrammarErrors(text) : [];
+  console.log("[AI Grammar Checker] Local grammar errors:", localGrammarErrors.length, JSON.stringify(localGrammarErrors));
   const cacheKey = buildCacheKey(text, settings);
 
   // Check cache first
@@ -239,8 +240,9 @@ async function handleCheckGrammar(
 
   errors = filterDerivedErrorsForLocalPunctuation(errors, localPunctuationErrors);
   errors = mergeLocalPunctuationErrors(errors, localPunctuationErrors);
+  console.log("[AI Grammar Checker] Before grammar merge:", errors.length, "API errors");
   errors = mergeLocalGrammarErrors(errors, localGrammarErrors);
-  console.log("[AI Grammar Checker] Validated errors:", errors.length, JSON.stringify(errors));
+  console.log("[AI Grammar Checker] After grammar merge:", errors.length, "total errors", JSON.stringify(errors));
 
   // Cache the unfiltered result
   setCache(cacheKey, errors, parsed.correctedText);

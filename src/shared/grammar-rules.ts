@@ -28,15 +28,18 @@ export function findLocalGrammarErrors(text: string): GrammarError[] {
   const sentences = text.split(/(?<=[.!?;])\s+/);
   let sentenceOffset = 0;
 
+  console.log("[Grammar Rules] findLocalGrammarErrors called, text length:", text.length, "sentences:", sentences.length);
+
   for (const sentence of sentences) {
     findModalParallelErrors(sentence, sentenceOffset, errors, seen);
-    sentenceOffset += sentence.length + (text[sentenceOffset + sentence.length] === " " ? 1 : 0);
+    sentenceOffset += sentence.length;
     // Advance past the whitespace that split created
     while (sentenceOffset < text.length && /\s/.test(text[sentenceOffset])) {
       sentenceOffset++;
     }
   }
 
+  console.log("[Grammar Rules] Found", errors.length, "local grammar errors:", JSON.stringify(errors));
   return errors;
 }
 
