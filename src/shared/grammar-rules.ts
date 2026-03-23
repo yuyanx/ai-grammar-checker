@@ -29,6 +29,7 @@ export function findLocalGrammarErrors(text: string): GrammarError[] {
 
   for (const sentence of sentences) {
     findModalParallelErrors(sentence, sentenceOffset, errors, seen);
+    findCompoundSubjectWasErrors(sentence, sentenceOffset, errors, seen);
     sentenceOffset += sentence.length;
     while (sentenceOffset < text.length && /\s/.test(text[sentenceOffset])) {
       sentenceOffset++;
@@ -147,6 +148,41 @@ function findModalParallelErrors(
         });
       }
     }
+  }
+}
+
+/**
+ * Detect compound subject + "which was" agreement errors:
+ * "burgers and fries, which was" → "which were"
+ * When "which" refers to a compound noun phrase joined by "and",
+ * the verb should be plural "were", not singular "was".
+ */
+function findCompoundSubjectWasErrors(
+  sentence: string,
+  baseOffset: number,
+  errors: GrammarError[],
+  seen: Set<string>
+): void {
+  // Match: [word] and [word][,] which was
+  const pattern = /\b(\w+)\s+and\s+(\w+)\s*,?\s*which\s+(was)\b/gi;
+
+  for (const match of sentence.matchAll(pattern)) {
+    const wasGroup = match[3];
+    const wasStart = (match.index ?? 0) + match[0].lastIndexOf(wasGroup);
+    const absoluteOffset = baseOffset + wasStart;
+
+    const key = `${absoluteOffset}:${wasGroup.length}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    errors.push({
+      original: wasGroup,
+      suggestion: "were",
+      offset: absoluteOffset,
+      length: wasGroup.length,
+      type: "grammar",
+      explanation: "Compound subject joined by 'and' requires plural verb 'were'.",
+    });
   }
 }
 
