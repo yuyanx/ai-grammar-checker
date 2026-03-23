@@ -12,7 +12,8 @@ import {
 import { OPENAI_API_URL, GEMINI_API_URL, DEFAULT_OPENAI_MODEL, MAX_TEXT_LENGTH, PROMPT_CACHE_VERSION } from "../shared/constants.js";
 import { findLocalPunctuationErrors, PUNCTUATION_RULES_VERSION } from "../shared/punctuation-rules.js";
 import { isLikelyEnglish } from "../shared/language-detect.js";
-import { detectDominantTense, detectModalParallelism } from "../shared/tense-detect.js";
+import { detectDominantTense } from "../shared/tense-detect.js";
+import { findLocalGrammarErrors } from "../shared/grammar-rules.js";
 
 interface TextChunk {
   text: string;
@@ -201,6 +202,7 @@ async function handleCheckGrammar(
   }
 
   const localPunctuationErrors = settings.checkPunctuation ? findLocalPunctuationErrors(text) : [];
+  const localGrammarErrors = settings.checkGrammar ? findLocalGrammarErrors(text) : [];
   const cacheKey = buildCacheKey(text, settings);
 
   // Check cache first
@@ -237,6 +239,7 @@ async function handleCheckGrammar(
 
   errors = filterDerivedErrorsForLocalPunctuation(errors, localPunctuationErrors);
   errors = mergeLocalPunctuationErrors(errors, localPunctuationErrors);
+  errors = mergeLocalGrammarErrors(errors, localGrammarErrors);
   console.log("[AI Grammar Checker] Validated errors:", errors.length, JSON.stringify(errors));
 
   // Cache the unfiltered result
@@ -264,8 +267,7 @@ async function checkSingleText(
   const localPunctuationErrors = settings.checkPunctuation ? findLocalPunctuationErrors(text) : [];
   const hasQuoteHeavyLocalPunctuation = hasQuoteRelatedLocalPunctuation(localPunctuationErrors);
   const tenseHint = detectDominantTense(text);
-  const hasModalParallelism = detectModalParallelism(text);
-  const prompt = buildGrammarCheckPrompt(text, tenseHint, hasModalParallelism);
+  const prompt = buildGrammarCheckPrompt(text, tenseHint);
   let parsed = await callConfiguredProvider(
     settings,
     prompt.system,
@@ -592,6 +594,24 @@ function mergeLocalPunctuationErrors(
       continue;
     }
     merged.push(apiError);
+  }
+
+  return merged.sort((a, b) => a.offset - b.offset);
+}
+
+function mergeLocalGrammarErrors(
+  apiErrors: GrammarError[],
+  localErrors: GrammarError[]
+): GrammarError[] {
+  if (localErrors.length === 0) return apiErrors;
+
+  const merged = [...apiErrors];
+
+  for (const localError of localErrors) {
+    const alreadyCovered = apiErrors.some((e) => rangesOverlap(e, localError));
+    if (!alreadyCovered) {
+      merged.push(localError);
+    }
   }
 
   return merged.sort((a, b) => a.offset - b.offset);
