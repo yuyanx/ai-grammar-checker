@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.13.1
+
+### Bug Fixes
+- Enable Gemini 2.5 Flash thinking with a budget of 1024 tokens so the model can reason about cross-clause grammar errors like pronoun-antecedent agreement and parallel structure, instead of being crippled by `thinkingBudget: 0`
+
 ## v1.13.0
 
 ### Features
