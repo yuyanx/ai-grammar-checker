@@ -47,7 +47,7 @@ Important areas:
 - `src/shared/grammar-rules.ts`: deterministic local grammar detection (modal parallel structure, `isVerbProtectedByModal`, `filterModalProtectedErrors`)
 - `src/shared/language-detect.ts`: English-only language gating
 
-### Current State (v1.13.3)
+### Current State (v1.13.4)
 
 Implemented:
 
@@ -81,6 +81,7 @@ Implemented:
 - Deterministic past progressive → present progressive: "was/were [verb]ing" → "is/are [verb]ing" when text signals present tense (v1.13.3)
 - Cache protection: worse results (fewer errors) don't overwrite richer cached results from concurrent checks (v1.13.3)
 - "was"→"were" corrections upgraded to present progressive form during tense normalization to present (v1.13.3)
+- Fuzzy text comparison (`textsEquivalent`) prevents spurious re-checks when contenteditable editors restructure DOM without changing visible text, preserving richer error results from earlier checks (v1.13.4)
 
 Known issues still open:
 

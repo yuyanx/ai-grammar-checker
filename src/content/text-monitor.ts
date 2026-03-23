@@ -81,6 +81,19 @@ function normalizeText(text: string): string {
 }
 
 /**
+ * Check if two texts are equivalent for re-check purposes.
+ * Contenteditable editors often restructure DOM (wrapping in <p>/<span>,
+ * converting <br> to block elements) without changing visible text.
+ * This causes getElementText to return slightly different whitespace,
+ * triggering unnecessary re-checks that can produce worse AI results.
+ */
+function textsEquivalent(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
+}
+
+/**
  * Extract text from an element, normalizing for contenteditable quirks.
  */
 function getElementText(element: HTMLElement): string {
@@ -969,10 +982,10 @@ async function checkElement(element: HTMLElement, autoShowPanel = false, retryCo
     return;
   }
 
-  // Skip unchanged text (normalized comparison to avoid spurious rechecks
-  // from contenteditable editors that add/remove trailing whitespace)
-  if (text === state.lastText) return;
-  if (text === state.pendingText) {
+  // Skip unchanged text (fuzzy comparison to avoid spurious rechecks from
+  // contenteditable editors that restructure DOM without changing visible text)
+  if (textsEquivalent(text, state.lastText)) return;
+  if (textsEquivalent(text, state.pendingText ?? "")) {
     if (isPendingRequestStale(state)) {
       console.warn("[AI Grammar Checker] Clearing stale pending check before new check");
       invalidatePendingRequest(state, text);
