@@ -1,10 +1,14 @@
 import { GrammarError } from "../shared/types.js";
 import { getShadowRoot, getShadowHost } from "./shadow-host.js";
 import { isDarkMode } from "./dark-mode.js";
-import { applyFix, escapeHtml, hidePopover } from "./popover.js";
+import { applyFix, applyFixDirectly, escapeHtml, hidePopover } from "./popover.js";
 import { errorKey } from "./underline-renderer.js";
 import { trackAppliedFix } from "./text-monitor.js";
-import { getContentEditableText } from "./contenteditable-snapshot.js";
+import {
+  getContentEditableText,
+  buildContentEditableSnapshot,
+  getContentEditableRangeForError,
+} from "./contenteditable-snapshot.js";
 
 let currentPanel: HTMLElement | null = null;
 let currentElement: HTMLElement | null = null;
@@ -12,7 +16,6 @@ let panelCloseHandler: ((e: Event) => void) | null = null;
 let panelEscHandler: ((e: KeyboardEvent) => void) | null = null;
 let panelScrollHandler: (() => void) | null = null;
 let panelInputHandler: (() => void) | null = null;
-const CONTENTEDITABLE_FIX_SETTLE_MS = 180;
 
 export function isErrorPanelOpen(): boolean {
   return currentPanel !== null;
@@ -281,29 +284,14 @@ async function applyAllFixes(
     return;
   } else if (element.isContentEditable) {
     element.focus();
-    const contentEditableText = getContentEditableText(element);
     let sorted: GrammarError[] | null = null;
 
-    if (correctedText && correctedText !== contentEditableText) {
-      const canonicalFixes = buildCanonicalFixAllErrors(contentEditableText, correctedText);
-      if (canonicalFixes.length > 0) {
-        console.log(
-          "[AI Grammar Checker] Fix All: using canonical correctedText diff for contenteditable",
-          canonicalFixes.length
-        );
-        sorted = canonicalFixes.sort((a, b) => b.offset - a.offset);
-      }
-    }
-
-    if (!sorted) {
-      // Rich-text editors like X keep internal editor state separate from the
-      // visible DOM. Replacing the entire contenteditable value in one shot can
-      // leave the visible composer frozen while the real editor state keeps
-      // changing underneath. Applying fixes one-by-one preserves the editor's
-      // own mutation flow much more reliably.
-      console.log("[AI Grammar Checker] Fix All: using surfaced sequential fixes for contenteditable");
-      sorted = [...errors].sort((a, b) => b.offset - a.offset);
-    }
+    // Always use the surfaced errors for Fix All on contenteditable.
+    // The canonical correctedText diff can include fixes beyond what's
+    // displayed (e.g. verb fixes filtered from the panel) and can produce
+    // coarse edits that fail on complex editors like ChatGPT/ProseMirror.
+    console.log("[AI Grammar Checker] Fix All: applying", errors.length, "surfaced fixes for contenteditable");
+    sorted = [...errors].sort((a, b) => b.offset - a.offset);
 
     await applyFixesSequentially(element, sorted, 0);
   }
@@ -381,7 +369,9 @@ function isWordChar(char: string): boolean {
 }
 
 /**
- * Apply contentEditable fixes one at a time with delays for MAIN world processing.
+ * Apply contentEditable fixes one at a time with inline verification and fallback.
+ * Does NOT delegate to applyFix (which has fire-and-forget timeouts) to avoid
+ * race conditions when applying multiple fixes sequentially.
  */
 async function applyFixesSequentially(
   element: HTMLElement,
@@ -390,40 +380,65 @@ async function applyFixesSequentially(
 ): Promise<void> {
   if (index >= errors.length) return;
 
+  const error = errors[index];
   const textBefore = getContentEditableText(element);
-  applyFix(element, errors[index]);
-  await waitForContentEditableFixSettle(element, textBefore);
+
+  // Step 1: Try execCommand with proper selection
+  let applied = false;
+  const snapshot = buildContentEditableSnapshot(element);
+  const range = getContentEditableRangeForError(element, error, snapshot);
+  if (range) {
+    const sel = window.getSelection();
+    if (sel) {
+      sel.removeAllRanges();
+      sel.addRange(range);
+      try {
+        document.execCommand("insertText", false, error.suggestion);
+      } catch {
+        // ignored
+      }
+    }
+  }
+
+  // Wait briefly for editor to process
+  await delay(80);
+  applied = getContentEditableText(element) !== textBefore;
+
+  // Step 2: If execCommand didn't work, try MAIN world
+  if (!applied) {
+    if (range) {
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
+    window.postMessage(
+      { type: "AI_GRAMMAR_APPLY_FIX", suggestion: error.suggestion },
+      "*"
+    );
+    await delay(80);
+    applied = getContentEditableText(element) !== textBefore;
+  }
+
+  // Step 3: If still not applied, use direct DOM manipulation
+  if (!applied) {
+    console.log("[AI Grammar Checker] Fix All: execCommand failed for", JSON.stringify(error.original), "→", JSON.stringify(error.suggestion), ", using DOM fallback");
+    applyFixDirectly(element, error);
+    await delay(80);
+    applied = getContentEditableText(element) !== textBefore;
+  }
+
+  if (!applied) {
+    console.log("[AI Grammar Checker] Fix All: all methods failed for", JSON.stringify(error.original));
+  }
+
+  // Continue to next error
   await applyFixesSequentially(element, errors, index + 1);
 }
 
-function waitForContentEditableFixSettle(
-  element: HTMLElement,
-  textBefore: string
-): Promise<void> {
-  return new Promise((resolve) => {
-    let resolved = false;
-    const start = Date.now();
-
-    const finish = () => {
-      if (resolved) return;
-      resolved = true;
-      resolve();
-    };
-
-    const poll = () => {
-      if (getContentEditableText(element) !== textBefore) {
-        finish();
-        return;
-      }
-      if (Date.now() - start >= CONTENTEDITABLE_FIX_SETTLE_MS) {
-        finish();
-        return;
-      }
-      setTimeout(poll, 30);
-    };
-
-    setTimeout(poll, 30);
-  });
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 interface DiffToken {
