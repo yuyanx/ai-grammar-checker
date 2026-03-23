@@ -254,7 +254,7 @@ async function handleCheckGrammar(
 
   // For chunked text, rebuild corrected text from the validated error list
   // to avoid chunk-boundary artifacts (duplicated words, misaligned punctuation)
-  const correctedText = chunked
+  let correctedText = chunked
     ? buildCorrectedTextFromErrors(text, errors)
     : (parsed.correctedText ?? text);
 
