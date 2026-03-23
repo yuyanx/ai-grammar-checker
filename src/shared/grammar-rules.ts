@@ -72,10 +72,8 @@ export function isVerbProtectedByModal(text: string, offset: number): boolean {
       const modalEnd = (modalMatch.index ?? 0) + modalMatch[0].length;
       const verbAfterModal = modalMatch[1];
 
-      // Skip if the verb right after modal is conjugated (different error type)
-      if (isConjugatedVerb(verbAfterModal)) continue;
-
       // Check if the target offset is the verb directly after the modal
+      // (protect regardless of whether it's currently conjugated or base form)
       const verbStart = (modalMatch.index ?? 0) + modal.length + (modalMatch[0].length - modal.length - verbAfterModal.length);
       if (localOffset === verbStart) return true;
 
