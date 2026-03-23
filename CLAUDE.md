@@ -47,7 +47,7 @@ Important areas:
 - `src/shared/grammar-rules.ts`: deterministic local grammar detection (modal parallel structure, `isVerbProtectedByModal`, `filterModalProtectedErrors`)
 - `src/shared/language-detect.ts`: English-only language gating
 
-### Current State (v1.12.49)
+### Current State (v1.12.50)
 
 Implemented:
 
@@ -68,6 +68,7 @@ Implemented:
 - Grammar prompt includes tense consistency examples for past-tense (v1.12.46) and present-tense narratives (v1.12.47), plus dominant-tense rule
 - Grammar prompt includes quantifier-noun number agreement detection (v1.12.48)
 - Fix All for contenteditable uses stepwise inline fallback per fix with verification (v1.12.49)
+- Increased chunk size limits (6 sentences/100 words/600 chars trigger, 5 sentences/500 chars per chunk) to preserve cross-sentence context for tense consistency and quotation handling (v1.12.50)
 
 Known issues still open:
 
