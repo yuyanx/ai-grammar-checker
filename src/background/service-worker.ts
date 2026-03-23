@@ -19,6 +19,8 @@ interface TextChunk {
   text: string;
   start: number;
   end: number;
+  contextBefore?: string;
+  contextAfter?: string;
 }
 
 // Rate limit state lives here in the service worker — persists across all tabs/page loads
@@ -269,11 +271,12 @@ async function handleCheckGrammar(
 async function checkSingleText(
   text: string,
   settings: Awaited<ReturnType<typeof getSettings>>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  context?: { before?: string; after?: string }
 ): Promise<{ parsed: ParsedResponse; errors: GrammarError[] }> {
   const localPunctuationErrors = settings.checkPunctuation ? findLocalPunctuationErrors(text) : [];
   const hasQuoteHeavyLocalPunctuation = hasQuoteRelatedLocalPunctuation(localPunctuationErrors);
-  const prompt = buildGrammarCheckPrompt(text);
+  const prompt = buildGrammarCheckPrompt(text, context);
   let parsed = await callConfiguredProvider(
     settings,
     prompt.system,
@@ -404,38 +407,60 @@ function splitTextIntoChunks(text: string): TextChunk[] {
     return [{ text, start: 0, end: text.length }];
   }
 
-  const chunks: TextChunk[] = [];
+  // First pass: determine chunk boundaries as sentence index ranges
+  const chunkRanges: Array<{ startIdx: number; endIdx: number }> = [];
   let chunkStartIndex = 0;
-  let currentStart = sentences[0].start;
   let currentEnd = sentences[0].end;
 
   for (let i = 1; i < sentences.length; i++) {
     const candidateEnd = sentences[i].end;
     const sentenceCount = i - chunkStartIndex + 1;
-    const candidateText = text.slice(currentStart, candidateEnd);
+    const candidateText = text.slice(sentences[chunkStartIndex].start, candidateEnd);
     const shouldBreak =
       sentenceCount > 3 ||
       candidateText.length > 260;
 
     if (shouldBreak) {
-      chunks.push({
-        text: text.slice(currentStart, currentEnd),
-        start: currentStart,
-        end: currentEnd,
-      });
+      chunkRanges.push({ startIdx: chunkStartIndex, endIdx: i - 1 });
       chunkStartIndex = i;
-      currentStart = sentences[i].start;
       currentEnd = sentences[i].end;
     } else {
       currentEnd = candidateEnd;
     }
   }
+  chunkRanges.push({ startIdx: chunkStartIndex, endIdx: sentences.length - 1 });
 
-  chunks.push({
-    text: text.slice(currentStart, currentEnd),
-    start: currentStart,
-    end: currentEnd,
-  });
+  // Second pass: build chunks with context from neighboring sentences
+  const chunks: TextChunk[] = [];
+  for (let c = 0; c < chunkRanges.length; c++) {
+    const range = chunkRanges[c];
+    const start = sentences[range.startIdx].start;
+    const end = sentences[range.endIdx].end;
+
+    // Context: last sentence of previous chunk
+    let contextBefore: string | undefined;
+    if (c > 0) {
+      const prevRange = chunkRanges[c - 1];
+      const prevLastSentence = sentences[prevRange.endIdx];
+      contextBefore = text.slice(prevLastSentence.start, prevLastSentence.end).trim();
+    }
+
+    // Context: first sentence of next chunk
+    let contextAfter: string | undefined;
+    if (c < chunkRanges.length - 1) {
+      const nextRange = chunkRanges[c + 1];
+      const nextFirstSentence = sentences[nextRange.startIdx];
+      contextAfter = text.slice(nextFirstSentence.start, nextFirstSentence.end).trim();
+    }
+
+    chunks.push({
+      text: text.slice(start, end),
+      start,
+      end,
+      contextBefore,
+      contextAfter,
+    });
+  }
 
   return chunks;
 }
@@ -570,6 +595,8 @@ function buildChunkCacheKey(
     text: chunk.text,
     start: chunk.start,
     end: chunk.end,
+    ctxBefore: chunk.contextBefore,
+    ctxAfter: chunk.contextAfter,
     provider: settings.provider,
     openaiModel: settings.provider === "openai" ? DEFAULT_OPENAI_MODEL : undefined,
     grammar: settings.checkGrammar,
@@ -591,7 +618,10 @@ async function checkChunkWithCache(
     return cached;
   }
 
-  const result = await checkSingleText(chunk.text, settings, signal);
+  const context = (chunk.contextBefore || chunk.contextAfter)
+    ? { before: chunk.contextBefore, after: chunk.contextAfter }
+    : undefined;
+  const result = await checkSingleText(chunk.text, settings, signal, context);
   setChunkCache(cacheKey, result.parsed, result.errors);
   return {
     parsed: cloneParsedResponse(result.parsed),

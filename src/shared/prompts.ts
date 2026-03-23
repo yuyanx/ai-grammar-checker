@@ -1,4 +1,4 @@
-export function buildGrammarCheckPrompt(text: string): {
+export function buildGrammarCheckPrompt(text: string, context?: { before?: string; after?: string }): {
   system: string;
   user: string;
 } {
@@ -60,7 +60,21 @@ Rules:
 - If no errors, return {"correctedText": "<the original text>", "errors": []}.
 - Output ONLY the JSON object.`;
 
-  const user = `Find ALL objective errors in this text. Check every sentence carefully for spelling, punctuation, capitalization, grammar, word choice, tense, agreement, articles, prepositions, pronouns, and missing words.\n\n${text}`;
+  let user: string;
+  if (context?.before || context?.after) {
+    // For chunked text, provide surrounding context so the AI understands boundary sentences
+    let contextNote = "The following text is an excerpt from a longer piece.";
+    if (context.before) {
+      contextNote += `\nFor context, the preceding text ends with: "${context.before}"`;
+    }
+    if (context.after) {
+      contextNote += `\nFor context, the following text starts with: "${context.after}"`;
+    }
+    contextNote += "\nOnly check the text below — do not check the context sentences above. All offsets must be relative to the text below.";
+    user = `${contextNote}\n\nFind ALL objective errors in this text. Check every sentence carefully for spelling, punctuation, capitalization, grammar, word choice, tense, agreement, articles, prepositions, pronouns, and missing words.\n\n${text}`;
+  } else {
+    user = `Find ALL objective errors in this text. Check every sentence carefully for spelling, punctuation, capitalization, grammar, word choice, tense, agreement, articles, prepositions, pronouns, and missing words.\n\n${text}`;
+  }
 
   return { system, user };
 }
