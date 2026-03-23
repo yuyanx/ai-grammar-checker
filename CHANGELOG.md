@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.13.3
+
+### Bug Fixes
+- Add deterministic past progressive → present progressive rule: when text signals present tense (3+ instances of "He go", "she feel"), "was/were [verb]ing" is corrected to "is/are [verb]ing" instead of just fixing agreement
+- Prevent worse results from overwriting better cached results: `setCache` skips when existing cache has more errors, and `handleCheckGrammar` re-checks cache before returning to prefer richer concurrent results
+- Upgrade "was"→"were" corrections to present progressive when normalizing to present tense (e.g. "They was playing" → "They are playing" not "They were playing")
+
 ## v1.13.2
 
 ### Bug Fixes

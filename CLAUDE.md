@@ -47,7 +47,7 @@ Important areas:
 - `src/shared/grammar-rules.ts`: deterministic local grammar detection (modal parallel structure, `isVerbProtectedByModal`, `filterModalProtectedErrors`)
 - `src/shared/language-detect.ts`: English-only language gating
 
-### Current State (v1.13.2)
+### Current State (v1.13.3)
 
 Implemented:
 
@@ -78,6 +78,9 @@ Implemented:
 - Post-processing tense normalization: when AI corrections mix present/past verb forms, `normalizeTenseInCorrections` flips minority-direction suggestions to match the majority using a verb form lookup table (v1.13.1)
 - `filterBadAgreementCorrections` rejects AI suggestions that break correct subject-verb agreement (e.g. "were"→"was" after "They") (v1.13.2)
 - Text-level tense signals: "3rd person subject + base form verb" patterns in the original text provide present-tense evidence for normalization even when chunks have few corrections (v1.13.2)
+- Deterministic past progressive → present progressive: "was/were [verb]ing" → "is/are [verb]ing" when text signals present tense (v1.13.3)
+- Cache protection: worse results (fewer errors) don't overwrite richer cached results from concurrent checks (v1.13.3)
+- "was"→"were" corrections upgraded to present progressive form during tense normalization to present (v1.13.3)
 
 Known issues still open:
 

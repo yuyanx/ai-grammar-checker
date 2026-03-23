@@ -94,6 +94,11 @@ function getCached(cacheKey: string): { errors: GrammarError[]; correctedText?: 
 }
 
 function setCache(cacheKey: string, errors: GrammarError[], correctedText?: string): void {
+  // Don't overwrite a richer cached result with a sparser one (AI non-determinism)
+  const existing = responseCache.get(cacheKey);
+  if (existing && Date.now() - existing.timestamp < CACHE_TTL && existing.errors.length > errors.length) {
+    return;
+  }
   if (responseCache.size >= CACHE_MAX) {
     const oldest = responseCache.keys().next().value!;
     responseCache.delete(oldest);
@@ -253,8 +258,18 @@ async function handleCheckGrammar(
     ? buildCorrectedTextFromErrors(text, errors)
     : (parsed.correctedText ?? text);
 
-  // Cache the unfiltered result
+  // Cache the unfiltered result (won't overwrite a richer existing result)
   setCache(cacheKey, errors, correctedText);
+
+  // If a concurrent check already cached a richer result, prefer it
+  const bestCached = getCached(cacheKey);
+  if (bestCached && bestCached.errors.length > errors.length) {
+    console.log(
+      `[AI Grammar Checker] Preferring richer cached result: ${bestCached.errors.length} vs ${errors.length} errors`
+    );
+    errors = [...bestCached.errors];
+    correctedText = bestCached.correctedText ?? correctedText;
+  }
 
   // Filter by user preferences
   if (!settings.checkGrammar) errors = errors.filter((e) => e.type !== "grammar");

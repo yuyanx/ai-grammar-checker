@@ -36,6 +36,12 @@ export function findLocalGrammarErrors(text: string): GrammarError[] {
     }
   }
 
+  // If text signals present tense, catch past progressive ("was/were + -ing")
+  const textSignals = countTextTenseSignals(text);
+  if (textSignals.present >= 3 && textSignals.past === 0) {
+    findPastProgressiveInPresentText(text, errors, seen);
+  }
+
   return errors;
 }
 
@@ -182,6 +188,52 @@ function findCompoundSubjectWasErrors(
       length: wasGroup.length,
       type: "grammar",
       explanation: "Compound subject joined by 'and' requires plural verb 'were'.",
+    });
+  }
+}
+
+/**
+ * When the text's dominant tense is present, "was/were [verb]ing" should
+ * be "is/are [verb]ing" — not just an agreement fix but a tense fix.
+ */
+function findPastProgressiveInPresentText(
+  text: string,
+  errors: GrammarError[],
+  seen: Set<string>
+): void {
+  // Match "was/were [verb]ing" patterns
+  const pattern = /\b(was|were)\s+(\w+ing)\b/gi;
+
+  for (const match of text.matchAll(pattern)) {
+    const wasWere = match[1];
+    const offset = match.index ?? 0;
+    const key = `${offset}:${wasWere.length}`;
+    if (seen.has(key)) continue;
+
+    // Determine correct present progressive form based on preceding subject
+    const before = text.slice(0, offset).trimEnd().toLowerCase();
+    const lastWord = before.match(/(\w+)$/)?.[1] ?? "";
+
+    let suggestion: string;
+    if (["they", "we", "you"].includes(lastWord)) {
+      suggestion = "are";
+    } else if (["he", "she", "it"].includes(lastWord)) {
+      suggestion = "is";
+    } else {
+      // For noun subjects, check if the "was" form suggests singular or plural
+      // "They was playing" → "They are playing"
+      // Default to "are" for "were", "is" for "was" (preserving number intent)
+      suggestion = wasWere.toLowerCase() === "was" ? "is" : "are";
+    }
+
+    seen.add(key);
+    errors.push({
+      original: wasWere,
+      suggestion,
+      offset,
+      length: wasWere.length,
+      type: "grammar",
+      explanation: `Use present progressive '${suggestion} ${match[2]}' to match the present tense of the surrounding text.`,
     });
   }
 }
@@ -378,6 +430,29 @@ export function normalizeTenseInCorrections(errors: GrammarError[], text: string
 
   const result: GrammarError[] = [];
   for (const { error, tense } of classified) {
+    // When normalizing to present, upgrade "was"→"were" to present progressive form
+    if (majorityTense === "present" && !tense) {
+      const origLower = error.original.toLowerCase();
+      const suggLower = error.suggestion.toLowerCase();
+      if (origLower === "was" && suggLower === "were") {
+        // Check if followed by -ing verb (progressive)
+        const afterOffset = error.offset + error.length;
+        const afterText = text.slice(afterOffset).trimStart();
+        if (/^\w+ing\b/.test(afterText)) {
+          // Determine subject for is/are
+          const before = text.slice(0, error.offset).trimEnd().toLowerCase();
+          const lastWord = before.match(/(\w+)$/)?.[1] ?? "";
+          const presentForm = ["they", "we", "you"].includes(lastWord) ? "are" : "is";
+          result.push({
+            ...error,
+            suggestion: matchTenseCase(presentForm, error.original),
+            explanation: `Use present progressive to match the present tense of the surrounding text.`,
+          });
+          continue;
+        }
+      }
+    }
+
     if (!tense || tense.direction === majorityTense) {
       result.push(error);
       continue;
