@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.12.36
+
+### Fixes
+- Revert prompt to pre-v1.12.32 state — removing rules 9-10 and Examples 3-4 that overloaded Flash Lite and caused it to miss basic grammar errors
+
 ## v1.13.0–v1.14.1 (reverted)
 
 All model upgrade and two-pass detection experiments reverted — caused instability with no net improvement. Back to v1.12.35 baseline.
