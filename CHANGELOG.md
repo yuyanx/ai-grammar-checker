@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.14.1
+
+### Fixes
+- Revert two-pass detection from v1.14.0 — caused oscillating suggestions where second pass contradicted first pass
+
 ## v1.14.0
 
 ### Features
