@@ -1,5 +1,37 @@
 # Changelog
 
+## v1.12.55
+
+### Improvements
+- Add targeted tense consistency instruction to prompt: "When correcting verb forms, keep all corrections in the same tense" — more focused than the reverted v1.12.51 dominant-tense approach
+- Bump prompt cache version to invalidate stale cached responses
+
+## v1.12.54
+
+### Improvements
+- Add deterministic compound subject agreement rule in `grammar-rules.ts`: detects "X and Y, which was" → "were" patterns the AI consistently misses in chunked text
+
+## v1.12.53
+
+### Improvements
+- Chunks now include surrounding sentence context (last sentence of previous chunk, first sentence of next chunk) as read-only context in the prompt, helping the AI interpret boundary text and catch cross-sentence agreement errors
+
+## v1.12.52
+
+### Bug Fixes
+- Rebuild chunked corrected text from the validated error list instead of concatenating per-chunk corrected text, eliminating boundary artifacts like duplicated words at chunk seams
+
+## v1.12.51
+
+### Bug Fixes
+- Revert prompt to v1.12.36 baseline: remove tense consistency examples (#3, #4), number agreement rule (#9), and dominant-tense instruction that degraded detection on chunked long text
+- Revert v1.12.50 chunk size increase — small chunks (3 sentences/260 chars) produce better error detection
+
+## v1.12.50
+
+### Bug Fixes
+- Increase chunk size thresholds (6 sentences/100 words/600 chars trigger, 5 sentences/500 chars per chunk) to preserve context for tense/agreement rules — later reverted in v1.12.51
+
 ## v1.12.49
 
 ### Bug Fixes

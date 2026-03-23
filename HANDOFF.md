@@ -10,7 +10,7 @@ npm run build
 Load `dist/` as unpacked extension in Chrome.
 
 ## Current State
-- Current package/manifest version: `1.12.49`
+- Current package/manifest version: `1.12.55`
 - Error panel feature complete: clicking the red badge opens a panel listing all errors with Fix/Dismiss per error and Fix All
 - Automatic single retry on transient API failures with visible orange "!" widget feedback
 - Editor-intent classifier gates activation to compose surfaces only; search bars, pickers, and utility inputs are suppressed
@@ -20,8 +20,11 @@ Load `dist/` as unpacked extension in Chrome.
 - Parallel chunk checks (concurrency=2) with per-chunk caching (5-minute TTL)
 - Stable compact/full badge placement across Gmail, LinkedIn, Grok, X, Instagram, GitHub, ChatGPT composers
 - Scroll-locked badge positioning without animation lag
-- Prompt includes few-shot examples for tense consistency (past and present narratives) and quantifier-noun agreement
+- Prompt includes targeted tense consistency instruction for verb corrections
 - Fix All for contenteditable now uses stepwise fallback per fix (execCommand → MAIN world → DOM) with inline verification
+- Chunked corrected text rebuilt from validated error list (no boundary artifacts)
+- Chunks include surrounding sentence context for cross-sentence error detection
+- Deterministic compound subject agreement rule ("X and Y, which was" → "were")
 
 ## Key Milestones
 1. **v1.9.0** — Deterministic punctuation rules (`punctuation-rules.ts`), English-only gating (`language-detect.ts`)
@@ -33,6 +36,11 @@ Load `dist/` as unpacked extension in Chrome.
 7. **v1.12.41–v1.12.43** — Deterministic modal parallel structure detection in `grammar-rules.ts`; `filterModalProtectedErrors` prevents AI from oscillating base-form verbs after modals
 8. **v1.12.45–v1.12.48** — Grammar prompt improvements: tense consistency examples (past + present), quantifier-noun agreement rule, corrected modal protection for conjugated-verb context
 9. **v1.12.49** — Fix All contenteditable refactored: inline stepwise fallback per fix, always uses surfaced errors not canonical diff
+10. **v1.12.50–v1.12.51** — Chunk size experiment (increased then reverted); prompt reverted to v1.12.36 baseline removing tense/agreement rules that hurt chunked detection
+11. **v1.12.52** — Chunked corrected text rebuilt from validated error list instead of concatenating chunk outputs
+12. **v1.12.53** — Surrounding sentence context added to chunk prompts for cross-sentence error detection
+13. **v1.12.54** — Deterministic compound subject agreement rule (`grammar-rules.ts`)
+14. **v1.12.55** — Targeted tense consistency instruction added to prompt
 
 ## Architecture
 

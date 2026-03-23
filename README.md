@@ -74,6 +74,7 @@ src/
     ├── prompts.ts                 # Grammar check prompt with few-shot example
     ├── api-parsers.ts             # Response parsing and validation
     ├── punctuation-rules.ts       # Deterministic local punctuation detection
+    ├── grammar-rules.ts           # Deterministic local grammar detection (modal structure, compound subjects)
     └── language-detect.ts         # English-only language gating
 ```
 
