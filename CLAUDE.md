@@ -13,7 +13,7 @@ After pushing changes, always remind the user to sync and rebuild locally:
 
 ```
 cd /Users/ryanxu/Documents/ai-grammar-checker
-git pull origin claude/angry-wu-k70YE
+git pull origin claude/review-grammarly-comparison-eV4RR
 npm run build
 ```
 
@@ -37,32 +37,39 @@ Important areas:
 
 - `src/content/text-monitor.ts`: editor discovery, debounce, state orchestration, widget lifecycle
 - `src/content/status-widget.ts`: badge rendering, compact/full presentation, placement logic
+- `src/content/editor-classifier.ts`: editor-intent classification and activation gating
 - `src/content/error-panel.ts`: panel UI and `Fix All`
 - `src/content/underline-renderer.ts`: underline overlays and hit targets
 - `src/background/service-worker.ts`: API calls, chunking, merge logic, retries, caching
 - `src/shared/api-parsers.ts`: parser normalization and corrected-text-derived fallback
 - `src/shared/prompts.ts`: model instructions and detection behavior
+- `src/shared/punctuation-rules.ts`: deterministic local punctuation detection
+- `src/shared/language-detect.ts`: English-only language gating
 
-### Current Progress From Codex
+### Current State (v1.12.31)
 
-Implemented / present:
+Implemented:
 
-- Long-text chunking in the service worker
-- Debounced checking in the content script
-- Current chunk processing is still effectively serial
-- Corrected-text fallback / merge logic exists
+- Deterministic local punctuation rules for obvious malformed patterns (v1.9.0)
+- English-only language gating in content script and service worker (v1.9.0)
+- Stable long-draft checking lifecycle with stale-response suppression (v1.10.0)
+- Parallel chunk checks with concurrency cap of 2 (v1.11.0)
+- Per-chunk caching with punctuation-rule cache versioning (v1.11.0)
+- Editor-intent classifier limiting activation to compose surfaces only (v1.12.0)
+- Scroll-locked badge positioning without animation lag (v1.12.1)
+- Stable compact/full badge placement for chat and email composers (v1.12.19–v1.12.31)
 - Error panel with `Fix`, `Dismiss`, and `Fix All`
-- Badge states for ready/checking/errors/clean/transient warning
-- Geometry-based compact/full badge logic
+- Badge states: ready, checking, errors, clean, transient warning
+- Corrected-text fallback and merge logic
+- Coordinated phrase protection, quote boundary validation, reverse fix suppression
 
 Known issues still open:
 
-- Punctuation can still be too model-dependent in some obvious cases
-- Blue ready badge can be missing, stale, duplicated, or flicker/re-animate during scroll/layout changes
-- No enforced English-only gating; non-English text can still be sent to the provider
-- Chat-composer badge sizing/placement can still overlap text
-- Underline rendering can become stale, messy, or collide visually with badge/tooltip UI
-- `Fix All` remains unstable on long Gmail drafts and is now deferred from the active roadmap until the other correctness/UX issues are resolved
+- `Fix All` remains unstable on long Gmail drafts (deferred)
+- Underline rendering can still become stale in rapid DOM-change scenarios
+- No personal dictionary / custom word list
+- No language variant selection (US/UK/CA/AU)
+- Keyboard shortcuts are mouse-only (only Escape works)
 
 ### Design Intention
 
@@ -74,59 +81,28 @@ Follow this order:
 
 Do not optimize speed first if the correction pipeline is still non-convergent or visually unstable.
 
-### Known Issue Review / Priority Context
+### Completed Roadmap
 
-#### Phase 1: Correctness
+#### Phase 1: Correctness (completed v1.9.0)
 
-Highest priority:
+1. ~~Add deterministic punctuation rules~~ — `src/shared/punctuation-rules.ts`
+2. ~~Add English-only gating~~ — `src/shared/language-detect.ts`
 
-1. Add deterministic punctuation rules
-2. Add English-only gating / suppress non-English checks
+#### Phase 2: Stable UX (completed v1.10.0–v1.12.31)
 
-Key intent:
+3. ~~Keep one stable long-draft checking state~~ — v1.10.0
+4. ~~Stabilize ready-badge lifecycle~~ — v1.10.0, refined through v1.12.31
+5. ~~Refine badge size allocation and placement for chat composers~~ — v1.12.19–v1.12.31
+6. ~~Fix stale underline rendering / collision cleanup~~ — v1.10.0 (generation gating + collision filtering)
 
-- Punctuation should not rely entirely on the model for obvious malformed cases
-- The extension is intended for English correction, so non-English input should be suppressed before request dispatch
+#### Phase 3: Performance (completed v1.11.0)
 
-#### Phase 2: Stable UX
+7. ~~Parallelize chunk checks with capped concurrency~~ — concurrency cap of 2
+8. ~~Add per-chunk caching~~ — 5-minute TTL with punctuation-rule versioning
 
-Next priority:
+#### Phase 4: Activation (completed v1.12.0)
 
-3. Keep one stable long-draft checking state
-4. Stabilize ready-badge lifecycle
-5. Refine badge size allocation and placement for chat composers
-6. Fix stale underline rendering / collision cleanup
-
-Key intent:
-
-- Long-draft checking should remain in one stable checking state until final results arrive
-- Blue ready/checking/clean warning states should be attached only to the active editor lifecycle and should not linger or flicker
-- Badge size should not be determined only by a crude height rule when safe-space-based allocation is needed
-- Chat composers like Grok should not allow the badge to overlap the active text line
-- Underlines and badge/tooltips should not visibly collide or render from stale layout state
-
-#### Phase 3: Performance
-
-Then optimize:
-
-7. Parallelize chunk checks with a small concurrency cap instead of fully serial chunk checking
-8. Add per-chunk caching
-
-Key intent:
-
-- Keep one stable “checking long draft” state during chunk work
-- Improve long-draft speed only after correctness and UX stability are reliable
-
-### Current Recommended Priority Sequence
-
-1. Add deterministic local punctuation heuristics for obvious cases
-2. Enforce English-only gating / suppress non-English checks and provider calls
-3. Keep one stable long-draft checking state during chunked checks
-4. Stabilize ready-badge focus lifecycle across Gmail/Grok-style editors
-5. Refine badge size allocation and placement for chat composers based on safe space, not only editor height
-6. Add stale-render cancellation and collision cleanup for underlines / badge tooltips
-7. Parallelize chunk checks with capped concurrency
-8. Add per-chunk caching
+9. ~~Editor-intent classifier~~ — `src/content/editor-classifier.ts`, limits activation to compose surfaces only
 
 ### Deferred Backlog
 
@@ -142,21 +118,3 @@ Key intent:
 - Ready/checking/clean/transient-warning states should behave like active-editor states, not page-global clutter
 - Compact vs full badge behavior should be deliberate and predictable, especially in chat editors and cramped composers
 
-### Next Goal For Claude Code
-
-Claude should act as the lead architect for the next work order.
-
-Please:
-
-- Analyze the codebase together with this file
-- Reconstruct the current pipeline and known failure modes
-- Produce an optimized roadmap with:
-  - phased work breakdown
-  - concrete sub-tasks per phase
-  - acceptance criteria for each sub-task
-  - risks and mitigations
-  - implementation priorities and dependencies
-- Prefer a roadmap that minimizes regressions while improving punctuation/language correctness first, then UX stability, then performance
-- Exclude `Fix All` from the active implementation roadmap for now; treat it as deferred backlog unless explicitly re-opened
-
-Do **not** start from a generic plan. Use the current implementation shape in this repo as the basis for the roadmap.
