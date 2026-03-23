@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.13.5
+
+### Bug Fixes
+- Fix `visibilitychange` recovery killing in-flight grammar checks: only recover checks that are actually stale (>20s), not ones still actively processing — tab-switching no longer causes good results to be overwritten by worse AI responses
+- Apply `textsEquivalent` fuzzy comparison to all recovery and focus paths (`recoverVisiblePendingChecks`, `recoverElementIfStuck`, `primeElementOnFocus`, `invalidatePendingRequest`) so whitespace-only DOM mutations don't trigger unnecessary re-checks
+- Downgrade "Recovering stale pending check" from `console.warn` to `console.log` since it's expected behavior, not a warning
+
+## v1.13.4
+
+### Bug Fixes
+- Add `textsEquivalent` fuzzy text comparison that collapses whitespace before comparing, preventing contenteditable DOM mutations (wrapping in `<p>`/`<span>`, converting `<br>` to block elements) from triggering spurious re-checks that overwrite richer error results with worse AI responses
+
 ## v1.13.3
 
 ### Bug Fixes
