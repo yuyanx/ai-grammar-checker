@@ -1,4 +1,4 @@
-export function buildGrammarCheckPrompt(text: string): {
+export function buildGrammarCheckPrompt(text: string, tenseHint?: "past" | "present" | null): {
   system: string;
   user: string;
 } {
@@ -60,7 +60,10 @@ Rules:
 - If no errors, return {"correctedText": "<the original text>", "errors": []}.
 - Output ONLY the JSON object.`;
 
-  const user = `Find ALL objective errors in this text. Check every sentence carefully for spelling, punctuation, capitalization, grammar, word choice, tense, agreement, articles, prepositions, pronouns, and missing words.\n\n${text}`;
+  let user = `Find ALL objective errors in this text. Check every sentence carefully for spelling, punctuation, capitalization, grammar, word choice, tense, agreement, articles, prepositions, pronouns, and missing words.\n\n${text}`;
+  if (tenseHint) {
+    user += `\n\nNote: This text is predominantly written in ${tenseHint} tense. Flag any verbs that inconsistently break this tense.`;
+  }
 
   return { system, user };
 }

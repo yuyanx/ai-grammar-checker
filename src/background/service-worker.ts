@@ -12,6 +12,7 @@ import {
 import { OPENAI_API_URL, GEMINI_API_URL, DEFAULT_OPENAI_MODEL, MAX_TEXT_LENGTH, PROMPT_CACHE_VERSION } from "../shared/constants.js";
 import { findLocalPunctuationErrors, PUNCTUATION_RULES_VERSION } from "../shared/punctuation-rules.js";
 import { isLikelyEnglish } from "../shared/language-detect.js";
+import { detectDominantTense } from "../shared/tense-detect.js";
 
 interface TextChunk {
   text: string;
@@ -262,7 +263,8 @@ async function checkSingleText(
 ): Promise<{ parsed: ParsedResponse; errors: GrammarError[] }> {
   const localPunctuationErrors = settings.checkPunctuation ? findLocalPunctuationErrors(text) : [];
   const hasQuoteHeavyLocalPunctuation = hasQuoteRelatedLocalPunctuation(localPunctuationErrors);
-  const prompt = buildGrammarCheckPrompt(text);
+  const tenseHint = detectDominantTense(text);
+  const prompt = buildGrammarCheckPrompt(text, tenseHint);
   let parsed = await callConfiguredProvider(
     settings,
     prompt.system,
