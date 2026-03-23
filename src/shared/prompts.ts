@@ -15,6 +15,7 @@ Detect these objective error types:
 6. Verb tense, agreement, and tense consistency across the text
 7. Articles, prepositions, pronouns, and word-form mistakes
 8. Missing or extra words that make the sentence ungrammatical
+9. Number agreement: quantifiers like "some", "several", "many", "few", "these", "those" require plural nouns (e.g. "some part" → "some parts")
 
 Do NOT rewrite for style, tone, voice, or personal preference. Only correct genuine language errors.
 
@@ -94,6 +95,7 @@ Review the text as a whole and do not assume it is already correct. Look specifi
 6. Verb tense, agreement, and tense consistency across the text
 7. Articles, prepositions, pronouns, and word-form mistakes
 8. Missing or extra words
+9. Number agreement: quantifiers like "some", "several", "many", "few" require plural nouns (e.g. "some part" → "some parts")
 
 Do NOT rewrite for style or preference. Only fix genuine language mistakes.
 
