@@ -132,7 +132,46 @@ export function showErrorPanel(
     e.stopPropagation();
     e.preventDefault();
     fixAllBtn.setAttribute("disabled", "true");
+
+    // Temporarily ignore inputs so the synthetic events from applying fixes don't close the panel
+    if (panelInputHandler) {
+      element.removeEventListener("input", panelInputHandler);
+    }
+
     await applyAllFixes(element, remainingErrors, list, correctedText);
+
+    // Convergence loop: ask the AI if there's anything left
+    let loopCount = 0;
+    while (loopCount < 2) {
+      loopCount++;
+      const currentText = element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+        ? element.value
+        : getContentEditableText(element);
+
+      if (!currentText.trim()) break;
+
+      updateTitle(title, "Fixing remaining... " + loopCount);
+
+      const requestId = `convergence-${Date.now()}`;
+      try {
+        const response: any = await chrome.runtime.sendMessage({
+          type: "CHECK_GRAMMAR",
+          text: currentText,
+          requestId,
+        });
+
+        // Break if completely clean or API failed
+        if (response.error || !response.errors || response.errors.length === 0) {
+          break;
+        }
+
+        await applyAllFixes(element, response.errors, list, response.correctedText);
+      } catch (err) {
+        console.warn("[AI Grammar Checker] Convergence check failed:", err);
+        break;
+      }
+    }
+
     remainingErrors = [];
     updateTitle(title, 0);
     showSuccessState(list, success, fixAllBtn);
@@ -261,14 +300,13 @@ async function applyAllFixes(
     const currentValue = element.value;
     const surfacedValue = buildTextareaValueFromErrors(currentValue, errors);
 
-    // The panel's surfaced issues are the authoritative UI contract.
-    // correctedText can lag behind merged local/derived issues on follow-up checks,
-    // which makes Fix All look like a no-op on editors such as GitHub comments.
+    // Use correctedText from AI first to ensure all structural changes are applied,
+    // falling back to manually merging surfaced errors if missing.
     const value =
-      surfacedValue !== currentValue
-        ? surfacedValue
-        : correctedText && correctedText !== currentValue
-          ? correctedText
+      correctedText && correctedText !== currentValue
+        ? correctedText
+        : surfacedValue !== currentValue
+          ? surfacedValue
           : currentValue;
 
     // Try execCommand for undo support: select all text, then insert corrected version
@@ -286,12 +324,14 @@ async function applyAllFixes(
     element.focus();
     let sorted: GrammarError[] | null = null;
 
-    // Always use the surfaced errors for Fix All on contenteditable.
-    // The canonical correctedText diff can include fixes beyond what's
-    // displayed (e.g. verb fixes filtered from the panel) and can produce
-    // coarse edits that fail on complex editors like ChatGPT/ProseMirror.
-    console.log("[AI Grammar Checker] Fix All: applying", errors.length, "surfaced fixes for contenteditable");
-    sorted = [...errors].sort((a, b) => b.offset - a.offset);
+    if (correctedText && correctedText !== getContentEditableText(element)) {
+      console.log("[AI Grammar Checker] Fix All: applying canonical diff for contenteditable");
+      const canonicalErrors = buildCanonicalFixAllErrors(getContentEditableText(element), correctedText);
+      sorted = canonicalErrors.sort((a, b) => b.offset - a.offset);
+    } else {
+      console.log("[AI Grammar Checker] Fix All: applying", errors.length, "surfaced fixes for contenteditable");
+      sorted = [...errors].sort((a, b) => b.offset - a.offset);
+    }
 
     await applyFixesSequentially(element, sorted, 0);
   }
@@ -378,63 +418,70 @@ async function applyFixesSequentially(
   errors: GrammarError[],
   index: number
 ): Promise<void> {
-  if (index >= errors.length) return;
+  // Use a loop to avoid deep call stacking, process as fast as possible synchronously
+  for (let i = index; i < errors.length; i++) {
+    const error = errors[i];
+    const textBefore = getContentEditableText(element);
 
-  const error = errors[index];
-  const textBefore = getContentEditableText(element);
-
-  // Step 1: Try execCommand with proper selection
-  let applied = false;
-  const snapshot = buildContentEditableSnapshot(element);
-  const range = getContentEditableRangeForError(element, error, snapshot);
-  if (range) {
-    const sel = window.getSelection();
-    if (sel) {
-      sel.removeAllRanges();
-      sel.addRange(range);
-      try {
-        document.execCommand("insertText", false, error.suggestion);
-      } catch {
-        // ignored
-      }
-    }
-  }
-
-  // Wait briefly for editor to process
-  await delay(80);
-  applied = getContentEditableText(element) !== textBefore;
-
-  // Step 2: If execCommand didn't work, try MAIN world
-  if (!applied) {
+    // Step 1: Try execCommand with proper selection
+    let applied = false;
+    const snapshot = buildContentEditableSnapshot(element);
+    const range = getContentEditableRangeForError(element, error, snapshot);
     if (range) {
       const sel = window.getSelection();
       if (sel) {
         sel.removeAllRanges();
         sel.addRange(range);
+        try {
+          document.execCommand("insertText", false, error.suggestion);
+          if (getContentEditableText(element) !== textBefore) {
+            applied = true;
+          }
+        } catch {
+          // ignored
+        }
       }
     }
-    window.postMessage(
-      { type: "AI_GRAMMAR_APPLY_FIX", suggestion: error.suggestion },
-      "*"
-    );
-    await delay(80);
-    applied = getContentEditableText(element) !== textBefore;
-  }
 
-  // Step 3: If still not applied, use direct DOM manipulation
-  if (!applied) {
-    console.log("[AI Grammar Checker] Fix All: execCommand failed for", JSON.stringify(error.original), "→", JSON.stringify(error.suggestion), ", using DOM fallback");
-    applyFixDirectly(element, error);
-    await delay(80);
-    applied = getContentEditableText(element) !== textBefore;
-  }
+    if (!applied) {
+      // Wait briefly for editor to process
+      await delay(30);
+      applied = getContentEditableText(element) !== textBefore;
+    }
 
-  if (!applied) {
-    console.log("[AI Grammar Checker] Fix All: all methods failed for", JSON.stringify(error.original));
-  }
+    // Step 2: If execCommand didn't work, try MAIN world
+    if (!applied) {
+      if (range) {
+        const sel = window.getSelection();
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }
+      window.postMessage(
+        { type: "AI_GRAMMAR_APPLY_FIX", suggestion: error.suggestion },
+        "*"
+      );
+      await delay(50);
+      applied = getContentEditableText(element) !== textBefore;
+    }
 
-  // Continue to next error
-  await applyFixesSequentially(element, errors, index + 1);
+    // Step 3: If still not applied, use direct DOM manipulation
+    if (!applied) {
+      console.log("[AI Grammar Checker] Fix All: execCommand failed for", JSON.stringify(error.original), "→", JSON.stringify(error.suggestion), ", using DOM fallback");
+      applyFixDirectly(element, error);
+      if (getContentEditableText(element) !== textBefore) {
+        applied = true;
+      } else {
+        await delay(50);
+        applied = getContentEditableText(element) !== textBefore;
+      }
+    }
+
+    if (!applied) {
+      console.log("[AI Grammar Checker] Fix All: all methods failed for", JSON.stringify(error.original));
+    }
+  }
 }
 
 function delay(ms: number): Promise<void> {
@@ -695,11 +742,15 @@ function animateRemoveItem(item: HTMLElement): void {
   }, 300);
 }
 
-function updateTitle(titleEl: HTMLElement, count: number): void {
-  if (count > 0) {
-    titleEl.textContent = `${count} issue${count !== 1 ? "s" : ""} found`;
+function updateTitle(titleEl: HTMLElement, count: number | string): void {
+  if (typeof count === "string") {
+    titleEl.textContent = count;
   } else {
-    titleEl.textContent = "No issues remaining";
+    if (count > 0) {
+      titleEl.textContent = `${count} issue${count !== 1 ? "s" : ""} found`;
+    } else {
+      titleEl.textContent = "No issues remaining";
+    }
   }
 }
 

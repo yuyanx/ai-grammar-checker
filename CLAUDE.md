@@ -47,7 +47,7 @@ Important areas:
 - `src/shared/grammar-rules.ts`: deterministic local grammar detection (modal parallel structure, `isVerbProtectedByModal`, `filterModalProtectedErrors`)
 - `src/shared/language-detect.ts`: English-only language gating
 
-### Current State (v1.13.5)
+### Current State (v1.13.8)
 
 Implemented:
 
@@ -65,7 +65,7 @@ Implemented:
 - Coordinated phrase protection, quote boundary validation, reverse fix suppression
 - Deterministic modal parallel structure detection: catches conjugated verbs after modals (v1.12.41) and filters oscillating AI suggestions via `filterModalProtectedErrors` (v1.12.43)
 - `isVerbProtectedByModal` now protects coordinated verbs even when the modal-adjacent verb is conjugated (v1.12.45)
-- Fix All for contenteditable uses stepwise inline fallback per fix with verification (v1.12.49)
+- Fix All for contenteditable uses stepwise inline fallback per fix with verification (v1.12.49) and now executes in a fast synchronous loop applying the full canonical `correctedText` diff to avoid SPA interruptions and whack-a-mole checking loops (v1.13.7)
 - Reverted prompt to v1.12.36 baseline: removed tense consistency examples, number agreement rule, and dominant-tense instruction that degraded detection on chunked long text (v1.12.51)
 - Reverted chunk size increase from v1.12.50 — small chunks (3 sentences/260 chars) produce better error detection (v1.12.51)
 - Chunked corrected text is now rebuilt from the validated error list instead of concatenating chunk outputs, eliminating boundary artifacts like duplicated words (v1.12.52)
@@ -83,6 +83,9 @@ Implemented:
 - "was"→"were" corrections upgraded to present progressive form during tense normalization to present (v1.13.3)
 - Fuzzy text comparison (`textsEquivalent`) prevents spurious re-checks when contenteditable editors restructure DOM without changing visible text, preserving richer error results from earlier checks (v1.13.4)
 - `visibilitychange` recovery now only fires for stale checks (>20s), preventing tab-switch from killing in-flight checks; all recovery/focus paths use `textsEquivalent` (v1.13.5)
+- `Fix All` on contenteditable rewritten to execute in an instantaneous synchronous batch, preventing SPA lifecycle interruptions and shifted text offsets (v1.13.6)
+- `Fix All` now computes a canonical token diff against the full `correctedText` (instead of only surfaced errors) to ensure text is truly perfected in one go with no follow-up passes (v1.13.7)
+- `Fix All` handles long-draft convergence loops internally via API polling (max 3 rounds) to natively squash all secondary/stylistic errors in one user click (v1.13.8)
 
 Known issues still open:
 

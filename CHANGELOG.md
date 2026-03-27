@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.13.8
+
+### Features
+- Implement a 3-pass automatic "Fix All" Convergence Loop: `Fix All` now actively queries the AI after its first pass to ensure no structural or stylistic gaps were missed, squashing all whack-a-mole issues autonomously without requiring the user to re-read and click "Fix All" multiple times
+
+## v1.13.7
+
+### Bug Fixes
+- Let `Fix All` use the AI's canonical fully `correctedText` diff instead of only applying surfaced (UI-displayed) errors, guaranteeing that texts are wholly cleaned in one step without triggering whack-a-mole follow-up corrections
+
+## v1.13.6
+
+### Bug Fixes
+- Refactor `Fix All` for contenteditable fields to process corrections instantaneously via a synchronous batch loop, preventing single-page applications (React/ProseMirror) from interrupting the sequence with DOM updates and shifted text offsets
+- Temporarily disable internal `input` event listeners while `Fix All` executes to prevent synthetic focus/input events from prematurely closing the error panel mid-flight
+
 ## v1.13.5
 
 ### Bug Fixes

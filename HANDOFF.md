@@ -10,7 +10,7 @@ npm run build
 Load `dist/` as unpacked extension in Chrome.
 
 ## Current State
-- Current package/manifest version: `1.13.5`
+- Current package/manifest version: `1.13.8`
 - Error panel feature complete: clicking the red badge opens a panel listing all errors with Fix/Dismiss per error and Fix All
 - Automatic single retry on transient API failures with visible orange "!" widget feedback
 - Editor-intent classifier gates activation to compose surfaces only; search bars, pickers, and utility inputs are suppressed
@@ -21,7 +21,7 @@ Load `dist/` as unpacked extension in Chrome.
 - Stable compact/full badge placement across Gmail, LinkedIn, Grok, X, Instagram, GitHub, ChatGPT composers
 - Scroll-locked badge positioning without animation lag
 - Prompt includes targeted tense consistency instruction for verb corrections
-- Fix All for contenteditable now uses stepwise fallback per fix (execCommand → MAIN world → DOM) with inline verification
+- Fix All for contenteditable now automatically performs a deep-cleaning "convergence loop", programmatically re-checking the AI up to 3 times to squash any lingering or unflagged stylistic discrepancies
 - Chunked corrected text rebuilt from validated error list (no boundary artifacts)
 - Chunks include surrounding sentence context for cross-sentence error detection
 - Deterministic compound subject agreement rule ("X and Y, which was" → "were")
@@ -47,6 +47,9 @@ Load `dist/` as unpacked extension in Chrome.
 18. **v1.13.3** — Past progressive tense fix ("was/were playing" → "are playing" in present-tense text); cache protection against worse results overwriting better ones; "was"→"were" upgraded to present progressive during normalization
 19. **v1.13.4** — Fuzzy text comparison (`textsEquivalent`) prevents spurious re-checks from contenteditable DOM mutations, preserving richer error results
 20. **v1.13.5** — `visibilitychange` recovery restricted to stale checks only (>20s); all recovery/focus paths use `textsEquivalent`; stale recovery downgraded from warn to log
+21. **v1.13.6** — `Fix All` on contenteditable rewritten to be synchronous/instantaneous, bypassing SPA interruption, and `input` events are suppressed while it applies
+22. **v1.13.7** — `Fix All` now prioritizes the AI's full canonical `correctedText` diff over just surfaced errors so text becomes perfectly clean in one pass
+23. **v1.13.8** — `Fix All` now features an automatic Convergence Loop, actively polling the AI for lingering stylistic errors natively up to 3 passes so the user isn't stuck playing whack-a-mole
 
 ## Architecture
 
